@@ -1,19 +1,113 @@
 """
 Docstring for software.thermal_predictor
 
+Dependencies: 
+pip install adafruit-circuitpython-mlx90614 adafruit-blinka
+python software/thermal_predictor.py --predict --read-mlx <=====  Run prediction using the sensor
+python software/thermal_predictor.py --predict --read-mlx --mlx-addr 0x5B <====== If sensor isn’t at default address
+
 predict temperature of tissue 5 seconds into the future (>40°C -> risk of damage -> take necessary precautions)
 """
 
 import argparse
 import numpy as np
 import os
+import time
+import csv
+
+# Optional MLX90614 support (I2C IR temperature sensor) 
+# Works on Raspberry Pi / Jetson when I2C is enabled.
+# Preferred install:
+#   pip install adafruit-circuitpython-mlx90614 adafruit-blinka
+# On Jetson, you may also need I2C enabled and permission to access /dev/i2c-*
+
+from typing import Optional
+
+try:
+    import board
+    import busio
+    import adafruit_mlx90614
+    _HAVE_MLX = True
+except Exception:
+    board = None
+    busio = None
+    adafruit_mlx90614 = None
+    _HAVE_MLX = False
+
+
+class MLX90614Sensor:
+    """Simple wrapper for MLX90614 object temperature reading."""
+
+    def __init__(self, i2c_bus: Optional[int] = None, address: int = 0x5A):
+        if not _HAVE_MLX:
+            raise ImportError(
+                "MLX90614 libraries not available. Install with: "
+                "pip install adafruit-circuitpython-mlx90614 adafruit-blinka"
+            )
+
+        # Create I2C bus
+        # On most boards, board.I2C() picks the default I2C pins.
+        # If you need a specific bus number, pass i2c_bus (platform-dependent).
+        if i2c_bus is None:
+            i2c = board.I2C()
+        else:
+            # Some platforms expose explicit I2C constructors via busio.
+            # If this fails, fall back to board.I2C().
+            try:
+                i2c = busio.I2C(board.SCL, board.SDA)  # default pins, but explicit busio
+            except Exception:
+                i2c = board.I2C()
+
+        self._mlx = adafruit_mlx90614.MLX90614(i2c, address=address)
+
+    def read_object_c(self) -> float:
+        """Returns object (target) temperature in Celsius."""
+        return float(self._mlx.object_temperature)
+
+    def read_ambient_c(self) -> float:
+        """Returns ambient sensor temperature in Celsius."""
+        return float(self._mlx.ambient_temperature)
 
 MODEL_PATH = "software/thermal_model.npz"
+
+
+# --- Helper class: EMA filter and trend estimator ---
+class ThermalStateFilter:
+    """Simple EMA filter + temperature trend (dT/dt) estimator."""
+
+    def __init__(self, alpha: float = 0.3):
+        self.alpha = float(alpha)
+        self._ema = None
+        self._last_t = None
+        self._last_ema = None
+
+    def update(self, temp_c: float, t_s: float) -> dict:
+        temp_c = float(temp_c)
+        if self._ema is None:
+            self._ema = temp_c
+            self._last_ema = temp_c
+            self._last_t = float(t_s)
+            return {"temp_ema": self._ema, "dTdt": 0.0}
+
+        self._ema = self.alpha * temp_c + (1.0 - self.alpha) * self._ema
+        dt = max(float(t_s) - float(self._last_t), 1e-6)
+        dTdt = (self._ema - self._last_ema) / dt
+        self._last_t = float(t_s)
+        self._last_ema = float(self._ema)
+        return {"temp_ema": float(self._ema), "dTdt": float(dTdt)}
 
 class ThermalSafetyAgent:
     def __init__(self, model_path=None, max_temp_c=40.0):
         self.max_temp = max_temp_c
         self.model_path = model_path or MODEL_PATH
+
+        # Agentization knobs
+        self.resume_temp = max_temp_c - 1.5  # hysteresis: resume below this
+        self.max_rise_c_per_s = 0.35         # early-intervene if heating too fast
+        self.cooldown_s = 2.0                # minimum time between action escalations
+        self._last_action = "safe"
+        self._last_action_t = 0.0
+        self.filter = ThermalStateFilter(alpha=0.3)
 
         # Weights!
         self.w = None
@@ -49,15 +143,103 @@ class ThermalSafetyAgent:
         return float(y)
 
     def recommend_action(self, state: dict):
-        pred = self.predict(state)
-        if pred > self.max_temp:
-            # if we can slow, recommend slow; otherwise stop
-            speed = state.get("planned_speed", 0.0)
-            if speed > 30.0:
-                return {"action": "slow", "reason": f"Predicted T={pred:.2f}C > {self.max_temp}C", "predicted_temp": pred, "recommended_speed_reduction": 0.5}
-            else:
-                return {"action": "stop", "reason": f"Predicted T={pred:.2f}C unsafe", "predicted_temp": pred}
-        return {"action": "safe", "reason": "Within safe envelope", "predicted_temp": pred}
+        """Return a decision dict. This is stateful (agent-like)."""
+        now = float(state.get("timestamp_s", time.time()))
+
+        # Filter temperature + compute trend
+        filt = self.filter.update(state["current_temp"], now)
+        state_f = dict(state)
+        state_f["current_temp"] = filt["temp_ema"]
+
+        # Candidate actions the agent can choose from
+        base_speed = float(state.get("planned_speed", 0.0))
+        base_power = float(state.get("plasma_power", 100.0))
+        base_standoff = float(state.get("standoff_mm", 10.0))
+
+        candidates = [
+            {"name": "safe",    "speed": base_speed,          "power": base_power,         "standoff": base_standoff},
+            {"name": "slow",    "speed": base_speed * 0.5,    "power": base_power,         "standoff": base_standoff},
+            {"name": "cool",    "speed": base_speed,          "power": base_power * 0.7,   "standoff": base_standoff},
+            {"name": "backoff", "speed": base_speed,          "power": base_power,         "standoff": base_standoff + 5.0},
+            {"name": "stop",    "speed": 0.0,                 "power": 0.0,                "standoff": base_standoff},
+        ]
+
+        # Predict outcomes and score candidates
+        scored = []
+        for c in candidates:
+            s = dict(state_f)
+            s["planned_speed"] = float(c["speed"])
+            s["plasma_power"] = float(c["power"])
+            s["standoff_mm"] = float(c["standoff"])
+            pred = self.predict(s)
+
+            # Safety-first cost: unsafe temperatures are extremely expensive.
+            unsafe_margin = pred - self.max_temp
+            cost = 0.0
+            if unsafe_margin > 0:
+                cost += 1e6 + (unsafe_margin ** 2) * 1e4
+
+            # Efficiency/comfort costs (keep these small compared to safety)
+            cost += (base_speed - float(c["speed"])) ** 2 * 0.05
+            cost += (base_power - float(c["power"])) ** 2 * 0.01
+            cost += max(0.0, float(c["standoff"]) - base_standoff) * 0.5
+
+            # Discourage frequent STOPs unless necessary
+            if c["name"] == "stop":
+                cost += 50.0
+
+            scored.append((cost, c, pred))
+
+        scored.sort(key=lambda x: x[0])
+        best_cost, best_c, best_pred = scored[0]
+
+        # Trend-based early intervention
+        trend_flag = filt["dTdt"] > self.max_rise_c_per_s
+
+        # Hysteresis: if we were not safe recently, require cooler temp to return to safe
+        can_resume_safe = state_f["current_temp"] <= self.resume_temp
+
+        # Cooldown: prevent rapid oscillation of action levels
+        in_cooldown = (now - float(self._last_action_t)) < self.cooldown_s
+
+        chosen = best_c["name"]
+        reason_parts = []
+
+        if trend_flag and chosen == "safe":
+            # If heating fast, don't stay safe.
+            chosen = "slow" if base_speed > 1e-3 else "stop"
+            reason_parts.append(f"Rising fast dT/dt={filt['dTdt']:.2f}C/s")
+
+        if self._last_action != "safe" and not can_resume_safe and chosen == "safe":
+            chosen = self._last_action
+            reason_parts.append(f"Hysteresis: need <= {self.resume_temp:.1f}C to resume")
+
+        if in_cooldown and self._last_action in {"slow", "cool", "backoff", "stop"}:
+            # During cooldown, do not de-escalate to a weaker action.
+            escalation_order = {"safe": 0, "slow": 1, "cool": 1, "backoff": 1, "stop": 2}
+            if escalation_order.get(chosen, 0) < escalation_order.get(self._last_action, 0):
+                chosen = self._last_action
+                reason_parts.append("Cooldown: holding last action")
+
+        # Build final output
+        # Map chosen action to next parameters
+        chosen_map = {c["name"]: c for c in candidates}
+        c = chosen_map[chosen]
+
+        out = {
+            "action": chosen,
+            "predicted_temp": float(best_pred),
+            "temp_ema": float(filt["temp_ema"]),
+            "dTdt": float(filt["dTdt"]),
+            "next_speed": float(c["speed"]),
+            "next_power": float(c["power"]),
+            "next_standoff_mm": float(c["standoff"]),
+            "reason": ", ".join(reason_parts) if reason_parts else "Selected lowest-risk action",
+        }
+
+        self._last_action = chosen
+        self._last_action_t = now
+        return out
 
     def train_from_csv(self, csv_path):
         data = np.loadtxt(csv_path, delimiter=",", skiprows=1)
@@ -92,17 +274,128 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--train", help="CSV training file", default=None)
     p.add_argument("--predict", action="store_true", help="demo predict")
+    p.add_argument("--read-mlx", action="store_true", help="Read current_temp from MLX90614 (object temp)")
+    p.add_argument("--mlx-addr", type=lambda x: int(x, 0), default=0x5A, help="MLX90614 I2C address (default 0x5A)")
+    p.add_argument("--loop", action="store_true", help="Run continuous agent loop (reads sensor and outputs actions)")
+    p.add_argument("--hz", type=float, default=5.0, help="Loop frequency for --loop")
+    p.add_argument("--log", default=None, help="Optional CSV log path for --loop")
     args = p.parse_args()
 
     agent = ThermalSafetyAgent()
+    mlx = None
+    if args.read_mlx:
+        try:
+            mlx = MLX90614Sensor(address=args.mlx_addr)
+            print(f"MLX90614 ready at address {hex(args.mlx_addr)}")
+        except Exception as e:
+            raise SystemExit(f"Failed to init MLX90614: {e}")
+
     if args.train:
         print("Training from", args.train)
         stats = agent.train_from_csv(args.train)
         print("Trained:", stats)
     if args.predict:
-        sample = {"current_temp": 36.5, "planned_speed": 60.0, "plasma_power": 80.0, "standoff_mm": 10.0, "tissue_type": 0}
+        # If MLX90614 is connected, use its object temperature as current_temp.
+        current_temp = 36.5
+        ambient_temp = None
+        if mlx is not None:
+            current_temp = mlx.read_object_c()
+            ambient_temp = mlx.read_ambient_c()
+
+        sample = {
+            "current_temp": current_temp,
+            "planned_speed": 60.0,
+            "plasma_power": 80.0,
+            "standoff_mm": 10.0,
+            "tissue_type": 0,
+        }
+
         out = agent.recommend_action(sample)
+        if ambient_temp is not None:
+            out["ambient_temp"] = float(ambient_temp)
+
         print("Sample predict ->", out)
+
+    if args.loop:
+        if mlx is None:
+            raise SystemExit("--loop requires --read-mlx so we have a live temperature source")
+
+        period = 1.0 / max(float(args.hz), 0.1)
+        log_writer = None
+        log_f = None
+
+        if args.log:
+            log_f = open(args.log, "w", newline="")
+            log_writer = csv.DictWriter(
+                log_f,
+                fieldnames=[
+                    "t", "obj_temp", "amb_temp", "temp_ema", "dTdt",
+                    "planned_speed", "plasma_power", "standoff_mm",
+                    "action", "next_speed", "next_power", "next_standoff_mm", "predicted_temp", "reason"
+                ],
+            )
+            log_writer.writeheader()
+
+        print("Starting agent loop. Ctrl+C to stop.")
+        planned_speed = 60.0
+        plasma_power = 80.0
+        standoff_mm = 10.0
+
+        try:
+            while True:
+                t = time.time()
+                obj_temp = mlx.read_object_c()
+                amb_temp = mlx.read_ambient_c()
+
+                state = {
+                    "current_temp": float(obj_temp),
+                    "planned_speed": float(planned_speed),
+                    "plasma_power": float(plasma_power),
+                    "standoff_mm": float(standoff_mm),
+                    "tissue_type": 0,
+                    "timestamp_s": float(t),
+                }
+
+                out = agent.recommend_action(state)
+                print(
+                    f"T={obj_temp:.2f}C (ema {out['temp_ema']:.2f}, dT/dt {out['dTdt']:.2f}) -> "
+                    f"{out['action'].upper()} | pred {out['predicted_temp']:.2f}C | "
+                    f"next: v={out['next_speed']:.1f} p={out['next_power']:.1f} standoff={out['next_standoff_mm']:.1f}"
+                )
+
+                if log_writer is not None:
+                    row = {
+                        "t": t,
+                        "obj_temp": float(obj_temp),
+                        "amb_temp": float(amb_temp),
+                        "temp_ema": out["temp_ema"],
+                        "dTdt": out["dTdt"],
+                        "planned_speed": planned_speed,
+                        "plasma_power": plasma_power,
+                        "standoff_mm": standoff_mm,
+                        "action": out["action"],
+                        "next_speed": out["next_speed"],
+                        "next_power": out["next_power"],
+                        "next_standoff_mm": out["next_standoff_mm"],
+                        "predicted_temp": out["predicted_temp"],
+                        "reason": out["reason"],
+                    }
+                    log_writer.writerow(row)
+
+                # For demo: update planned params to the agent's recommendation
+                planned_speed = out["next_speed"]
+                plasma_power = out["next_power"]
+                standoff_mm = out["next_standoff_mm"]
+
+                # Sleep to maintain loop rate
+                dt = time.time() - t
+                time.sleep(max(0.0, period - dt))
+        except KeyboardInterrupt:
+            print("\nLoop stopped.")
+        finally:
+            if log_f is not None:
+                log_f.close()
 
 if __name__ == "__main__":
     main()
+

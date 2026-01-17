@@ -15,7 +15,7 @@ import os
 import time
 import csv
 
-# Optional MLX90614 support (I2C IR temperature sensor) 
+# Optional MLX90614 support (I2C IR temperature sensor)
 # Works on Raspberry Pi / Jetson when I2C is enabled.
 # Preferred install:
 #   pip install adafruit-circuitpython-mlx90614 adafruit-blinka
@@ -399,3 +399,4 @@ def main():
 if __name__ == "__main__":
     main()
 
+# End of software.thermal_predictor.py

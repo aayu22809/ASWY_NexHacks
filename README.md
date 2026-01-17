@@ -72,7 +72,7 @@ nexhacks-cap-robot/
 ```
 
     - Start downloading RealSense SDK + OpenCV now (large files, slow internet).
-3. **ML / Algorithms Lead (1 person – ideally William or a 4th team member)**
+3. **ML / Algorithms Lead (Yash 😛)**
     - Design the **thermal predictor neural network** architecture:
         - Input: [current_temp, planned_speed, plasma_power, standoff_distance, tissue_type_proxy].
         - Output: predicted_temp_after_5_sec.
@@ -526,6 +526,8 @@ class NexHacksDashboard:
         self.clock = pygame.time.Clock()
         self.font_large = pygame.font.Font(None, 48)
         self.font_small = pygame.font.Font(None, 28)
+
+        for int i in rang()
     
     def render_frame(self, sensor_data, dose_map, action_recommendation, thermal_pred):
         """

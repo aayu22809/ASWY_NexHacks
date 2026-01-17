@@ -1,0 +1,54 @@
+# Intel RealSense L515 Camera Configuration
+
+# Color stream settings
+color:
+  width: 640
+  height: 480
+  fps: 30
+  format: "bgr8"
+
+# Depth stream settings
+depth:
+  width: 640
+  height: 480
+  fps: 30
+  format: "z16"
+
+# Depth filters for noise reduction and stability
+filters:
+  spatial:
+    magnitude: 2        # Smooth spatial noise (1-5)
+    alpha: 0.5          # Weight of current pixel (0-1)
+  
+  temporal:
+    alpha: 0.4          # Temporal smoothing strength (0-1)
+    delta: 20           # Threshold for temporal update (pixels)
+  
+  hole_filling:
+    mode: 1             # 0=off, 1=2px, 2=4px, 3=8px, 4=16px, 5=unlimited
+
+# Region of Interest (ROI) filtering
+roi:
+  enabled: true
+  center_width_ratio: 0.6   # Use center 60% width
+  center_height_ratio: 0.6  # Use center 60% height
+
+# Depth range for arm-focused filtering (meters)
+depth_range:
+  min: 0.20    # Minimum depth (20 cm)
+  max: 0.90    # Maximum depth (90 cm)
+
+# Point cloud downsampling
+voxel_size: 0.003  # 3mm voxel grid (smaller = higher quality, lower FPS)
+
+# FPS display
+fps_update_interval: 1.0  # Print FPS every N seconds
+
+# Camera notes
+notes: |
+  L515 is a LiDAR-based depth camera optimized for:
+  - Optimal depth range: 0.25m to 1.5m
+  - High accuracy: ±2-3mm at 0.5m
+  - Avoid reflective surfaces and direct sunlight
+  - White background provides excellent contrast for arm segmentation
+

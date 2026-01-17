@@ -1,0 +1,79 @@
+# Path Planning Configuration
+
+# Toolpath generation parameters
+toolpath:
+  # Standoff distance above surface (mm)
+  standoff_distance: 5.0
+  
+  # Spacing between raster lines (mm)
+  line_spacing: 4.0
+  
+  # Feed rate during treatment (mm/min)
+  feed_rate: 50.0
+  
+  # Rapid rate for positioning moves (mm/min)
+  rapid_rate: 200.0
+  
+  # Use bidirectional (zigzag) pattern
+  use_bidirectional: true
+  
+  # Number of points per raster line
+  points_per_line: 60
+  
+  # Margin from surface edges (mm)
+  edge_margin: 2.0
+
+# Surface modeling parameters
+surface:
+  # RBF interpolation kernel
+  kernel: "thin_plate_spline"  # Options: thin_plate_spline, multiquadric, inverse_multiquadric, gaussian
+  
+  # Smoothing parameter for RBF (higher = smoother)
+  smoothing: 0.5
+  
+  # Delta for normal calculation (mm)
+  normal_delta: 1.0
+
+# Pattern types (future expansion)
+patterns:
+  raster:
+    enabled: true
+    description: "Zigzag pattern with bidirectional lines"
+  
+  spiral:
+    enabled: false
+    description: "Spiral pattern from outside to inside"
+  
+  contour:
+    enabled: false
+    description: "Follow wound contours at multiple depths"
+
+# Test surfaces for demo/validation
+test_surfaces:
+  gentle_curve:
+    length: 150
+    width: 100
+    samples: 2000
+  
+  cylinder:
+    radius: 40
+    length: 150
+    samples: 2000
+  
+  saddle:
+    width: 100
+    length: 150
+    samples: 2000
+  
+  sphere_section:
+    radius: 60
+    samples: 2000
+
+# Notes
+notes: |
+  Recommended parameter ranges:
+  - Standoff: 5-7mm for safe plasma application
+  - Line spacing: 3-5mm for good wound coverage
+  - Feed rate: 30-70mm/min depending on plasma power
+  - Points per line: 50-100 for smooth motion
+

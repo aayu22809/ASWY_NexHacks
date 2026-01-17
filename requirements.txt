@@ -1,13 +1,31 @@
-# Intel RealSense L515 Point Cloud Capture - Python Dependencies
-# 
-# Python Support:
-#   - Python 3.12: RECOMMENDED (both pyrealsense2 and Open3D have full support)
-#   - Python 3.10-3.11: Also supported
-#   - Python 3.13: pyrealsense2 works, but Open3D doesn't have wheels yet
+# Plasma Jet Path Planner - Python Dependencies
 #
-# Note: Use Python 3.12 for best compatibility with all dependencies
+# Python Support:
+#   - Python 3.12: RECOMMENDED (best compatibility)
+#   - Python 3.10-3.11: Also supported
+#   - Python 3.13: Limited support (Open3D wheels not yet available)
+#
+# Installation:
+#   pip install -r requirements.txt
+#   pip install -e .
 
-pyrealsense2>=2.56.5
+# Core scientific computing
 numpy>=1.21.0,<2.0.0
+scipy>=1.7.0
+
+# 3D scanning and processing
+pyrealsense2>=2.56.5
 open3d>=0.17.0
+
+# Visualization
+matplotlib>=3.5.0
+
+# Configuration management
+pyyaml>=6.0
+
+# Optional: Development tools (uncomment if needed)
+# pytest>=7.0.0
+# pytest-cov>=4.0.0
+# black>=23.0.0
+# flake8>=6.0.0
 

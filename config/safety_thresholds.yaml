@@ -1,0 +1,111 @@
+# Thermal and Operational Safety Configuration
+
+# Thermal safety thresholds
+thermal:
+  # Maximum safe tissue temperature (°C)
+  max_temperature: 40.0
+  
+  # Warning temperature threshold (°C)
+  warning_temperature: 38.0
+  
+  # Time horizon for thermal prediction (seconds)
+  prediction_horizon: 5.0
+  
+  # Temperature rise rate limit (°C/second)
+  max_temp_rise_rate: 2.0
+
+# Spatial safety constraints
+spatial:
+  # Minimum standoff distance (mm)
+  min_standoff: 5.0
+  
+  # Maximum standoff distance (mm)
+  max_standoff: 15.0
+  
+  # Safety margin from surface (mm)
+  safety_margin: 2.0
+
+# Temporal safety constraints
+temporal:
+  # Maximum dwell time at single point (seconds)
+  max_dwell_time: 10.0
+  
+  # Minimum movement speed (mm/min)
+  min_move_speed: 30.0
+  
+  # Maximum treatment time per session (minutes)
+  max_session_time: 30.0
+
+# Plasma parameters
+plasma:
+  # Power range (percentage)
+  min_power: 20.0
+  max_power: 100.0
+  
+  # Default power level (percentage)
+  default_power: 80.0
+
+# Safety actions
+actions:
+  # Action on temperature warning
+  on_warning: "slow"  # Options: slow, notify, continue
+  
+  # Action on temperature exceeded
+  on_exceed: "stop"   # Options: stop, emergency_stop
+  
+  # Speed reduction factor on warning (0-1)
+  slow_factor: 0.5
+
+# Monitoring
+monitoring:
+  # Sensor read frequency (Hz)
+  sensor_frequency: 10.0
+  
+  # Log frequency (Hz)
+  log_frequency: 1.0
+  
+  # Enable continuous monitoring
+  enabled: true
+
+# Thermal model configuration
+thermal_model:
+  # Model type
+  type: "linear_regression"  # Options: linear_regression, neural_network
+  
+  # Model path (if pre-trained)
+  model_path: "data/models/thermal_model.npz"
+  
+  # Features used for prediction
+  features:
+    - current_temp
+    - planned_speed
+    - plasma_power
+    - standoff_mm
+    - tissue_type
+
+# Emergency stop conditions
+emergency_stop:
+  # Temperature threshold for immediate stop (°C)
+  critical_temperature: 45.0
+  
+  # Enable hardware emergency stop button
+  hardware_estop: false
+  
+  # Timeout for no sensor data (seconds)
+  sensor_timeout: 5.0
+
+# Notes
+notes: |
+  Safety is paramount in medical applications:
+  - Always test with phantoms before live tissue
+  - Monitor temperature continuously during treatment
+  - Have emergency stop procedures ready
+  - Document all treatments for analysis
+  - Start with conservative parameters and optimize gradually
+  
+  Tissue damage risk:
+  - < 40°C: Generally safe
+  - 40-45°C: Risk of discomfort
+  - > 45°C: Risk of thermal damage
+  - > 50°C: Definite tissue damage
+

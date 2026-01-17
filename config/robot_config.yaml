@@ -1,0 +1,120 @@
+# Robot Arm Configuration (Placeholder)
+
+# Robot model and specifications
+robot:
+  model: "placeholder"
+  manufacturer: "TBD"
+  dof: 6  # Degrees of freedom
+  
+# Communication settings
+communication:
+  protocol: "serial"  # Options: serial, ethernet, usb
+  port: "COM3"        # Serial port (Windows) or /dev/ttyUSB0 (Linux)
+  baudrate: 115200
+  timeout: 5.0
+
+# Coordinate system
+coordinates:
+  # Origin relative to robot base (mm)
+  origin_x: 0.0
+  origin_y: 0.0
+  origin_z: 0.0
+  
+  # Orientation (degrees)
+  orientation_roll: 0.0
+  orientation_pitch: 0.0
+  orientation_yaw: 0.0
+
+# Motion constraints
+motion:
+  # Maximum velocity (mm/s)
+  max_velocity: 200.0
+  
+  # Maximum acceleration (mm/s²)
+  max_acceleration: 500.0
+  
+  # Maximum jerk (mm/s³)
+  max_jerk: 1000.0
+  
+  # Blending radius for smooth corners (mm)
+  blend_radius: 2.0
+
+# Workspace limits (mm)
+workspace:
+  x_min: -300.0
+  x_max: 300.0
+  y_min: -300.0
+  y_max: 300.0
+  z_min: 0.0
+  z_max: 500.0
+
+# Safety zones
+safety:
+  # Keepout zones (no-go areas)
+  keepout_zones: []
+  
+  # Collision detection
+  collision_detection: true
+  
+  # Force limits (N)
+  max_force: 50.0
+
+# Tool configuration
+tool:
+  # Tool offset from flange (mm)
+  tcp_x: 0.0
+  tcp_y: 0.0
+  tcp_z: 100.0  # Plasma jet extends 100mm from flange
+  
+  # Tool weight (kg)
+  weight: 0.5
+  
+  # Tool center point orientation (degrees)
+  tcp_roll: 0.0
+  tcp_pitch: 0.0
+  tcp_yaw: 0.0
+
+# G-code interpretation
+gcode:
+  # G-code flavor
+  flavor: "standard"  # Options: standard, marlin, grbl, fanuc
+  
+  # Units
+  units: "mm"  # Options: mm, inches
+  
+  # Coordinate mode
+  coordinate_mode: "absolute"  # Options: absolute, relative
+
+# Status monitoring
+monitoring:
+  # Query frequency (Hz)
+  status_frequency: 10.0
+  
+  # Log motion commands
+  log_commands: true
+  
+  # Enable position feedback
+  position_feedback: true
+
+# Notes
+notes: |
+  This is a placeholder configuration for robot arm integration.
+  Actual robot parameters should be configured based on:
+  - Specific robot model being used
+  - Manufacturer specifications
+  - Safety requirements
+  - Application constraints
+  
+  Common robot types for this application:
+  - 6-axis collaborative robots (cobots)
+  - SCARA robots for planar motion
+  - Cartesian robots for simple geometry
+  
+  Integration checklist:
+  - [ ] Configure communication protocol
+  - [ ] Calibrate coordinate system
+  - [ ] Test motion limits
+  - [ ] Verify safety zones
+  - [ ] Validate G-code interpretation
+  - [ ] Test emergency stop
+

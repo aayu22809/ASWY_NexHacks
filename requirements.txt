@@ -1,0 +1,13 @@
+# Intel RealSense L515 Point Cloud Capture - Python Dependencies
+# 
+# Python Support:
+#   - Python 3.12: RECOMMENDED (both pyrealsense2 and Open3D have full support)
+#   - Python 3.10-3.11: Also supported
+#   - Python 3.13: pyrealsense2 works, but Open3D doesn't have wheels yet
+#
+# Note: Use Python 3.12 for best compatibility with all dependencies
+
+pyrealsense2>=2.56.5
+numpy>=1.21.0,<2.0.0
+open3d>=0.17.0
+

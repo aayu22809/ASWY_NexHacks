@@ -1,0 +1,36 @@
+# FastAPI Backend Dependencies
+
+# Web framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+websockets>=12.0
+
+# Sensor drivers
+adafruit-circuitpython-mlx90640
+adafruit-blinka
+
+# GPIO (choose one based on platform)
+# For Jetson Orin Nano (recommended for Jetson):
+Jetson.GPIO
+# For Raspberry Pi 5 (recommended - works on all Pi models):
+rpi-lgpio
+# For Raspberry Pi 4 and earlier (fallback, not needed if using rpi-lgpio):
+# RPi.GPIO
+
+# Note: For Jetson, set environment variable before running:
+# export BLINKA_FORCEBOARD=JETSON_NX
+# This helps adafruit-blinka detect Jetson hardware correctly
+
+# RealSense camera
+pyrealsense2>=2.56.5
+
+# Scientific computing
+numpy>=1.21.0
+scipy>=1.9.0
+matplotlib>=3.5.0  # For IR sensor visualization
+
+# 3D processing
+open3d>=0.17.0
+
+# Pydantic for data validation
+pydantic>=2.0.0

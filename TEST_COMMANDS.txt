@@ -1,0 +1,25 @@
+================================================================================
+REALSENSE TEST COMMANDS - Copy and paste these into your terminal
+================================================================================
+
+# Test 1: Quick test (simple)
+cd /home/sam/ASWY_NexHacks-main
+python3 test_realsense.py
+
+# Test 2: Comprehensive test (detailed)
+cd /home/sam/ASWY_NexHacks-main
+python3 comprehensive_test.py
+
+# Test 3: Run visualizer (if camera detected)
+cd /home/sam/ASWY_NexHacks-main
+source ~/.bashrc
+python3 live_arm_pointcloud_jetson.py
+
+================================================================================
+WHAT TO EXPECT:
+================================================================================
+
+✓ If working: "ALL TESTS PASSED - REAL SENSE IS FULLY WORKING!"
+⚠ If no camera: "LIBRARY READY (connect camera to use)"
+
+================================================================================

@@ -1,0 +1,45 @@
+================================================================================
+QUICK START - Get RealSense Working
+================================================================================
+
+STEP 1: Run the master fix & test script
+------------------------------------------
+./fix_and_test_all.sh
+
+This will:
+- Check and fix udev rules
+- Check and fix user groups  
+- Check USB devices
+- Test camera detection
+- Test frame capture
+
+STEP 2: If camera not detected
+------------------------------------------
+1. Connect RealSense camera to USB 3.0 port (blue connector)
+2. Wait a few seconds
+3. Run: ./fix_and_test_all.sh again
+
+STEP 3: If still not working, run debug
+------------------------------------------
+python3 debug_camera.py
+
+This will show detailed diagnostics.
+
+STEP 4: Once camera is detected
+------------------------------------------
+python3 live_arm_pointcloud_jetson.py
+
+================================================================================
+ALTERNATIVE: Manual Testing
+================================================================================
+
+# Quick test
+python3 simple_test.py
+
+# Comprehensive test  
+python3 comprehensive_test.py
+
+# Debug everything
+python3 debug_camera.py
+
+================================================================================

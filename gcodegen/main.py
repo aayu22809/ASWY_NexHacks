@@ -10,12 +10,22 @@ from datetime import datetime
 import urllib.request
 import tempfile
 
-try:
-    import open3d as o3d
-    OPEN3D_AVAILABLE = True
-except ImportError:
-    OPEN3D_AVAILABLE = False
-    print("[WARN] open3d not available. Install with: pip install open3d")
+OPEN3D_AVAILABLE = False
+_OPEN3D = None
+
+
+def _get_open3d():
+    """Lazy import to avoid slow startup when Open3D isn't needed."""
+    global _OPEN3D, OPEN3D_AVAILABLE
+    if _OPEN3D is None:
+        try:
+            import open3d as o3d
+            _OPEN3D = o3d
+            OPEN3D_AVAILABLE = True
+        except ImportError:
+            OPEN3D_AVAILABLE = False
+            print("[WARN] open3d not available. Install with: pip install open3d")
+    return _OPEN3D
 
 NOISE_GEN = False
 
@@ -171,7 +181,8 @@ class HandModelLoader:
                 print(f"  Extracted {len(vertices)} vertices and {len(faces) if faces is not None else 0} faces from OBJ file")
                 
                 # If we have open3d and faces, create mesh directly from faces
-                if OPEN3D_AVAILABLE and faces is not None and len(faces) > 0:
+                o3d = _get_open3d()
+                if o3d and faces is not None and len(faces) > 0:
                     try:
                         print(f"  Creating mesh from {len(faces)} triangles...")
                         # Create mesh directly from vertices and faces
@@ -232,7 +243,8 @@ class HandModelLoader:
                 return points
         
         # Try to load from file if it exists and open3d is available
-        if OPEN3D_AVAILABLE and os.path.exists(mesh_path):
+        o3d = _get_open3d()
+        if o3d and os.path.exists(mesh_path):
             try:
                 print(f"  Loading hand model from: {mesh_path}")
                 
@@ -317,14 +329,14 @@ class HandModelLoader:
                 traceback.print_exc()
                 print(f"  Falling back to programmatic hand generation...")
         else:
-            if not OPEN3D_AVAILABLE:
+            if not _get_open3d():
                 print(f"  [WARN] open3d not available, cannot load mesh file")
             elif not os.path.exists(mesh_path):
                 print(f"  [WARN] Mesh file not found: {mesh_path}")
             print(f"  Falling back to programmatic hand generation...")
         
         # If open3d is available, try to download
-        if OPEN3D_AVAILABLE:
+        if _get_open3d():
             try:
                 mesh_path = HandModelLoader.download_hand_model(mesh_path)
                 if os.path.exists(mesh_path):

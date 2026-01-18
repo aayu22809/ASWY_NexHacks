@@ -81,7 +81,7 @@ class InteractiveVisualizer:
                        variable=self.show_rapid_var,
                        command=self.update_plot).grid(row=8, column=0, sticky=tk.W)
         
-        self.surface_alpha_var = tk.DoubleVar(value=0.4)
+        self.surface_alpha_var = tk.DoubleVar(value=0.8)
         ttk.Label(control_frame, text="Surface Opacity:").grid(row=9, column=0, sticky=tk.W, pady=(10, 0))
         ttk.Scale(control_frame, from_=0.1, to=1.0, variable=self.surface_alpha_var,
                  orient=tk.HORIZONTAL, command=self.update_plot).grid(row=10, column=0, sticky=tk.EW)
@@ -240,8 +240,9 @@ class InteractiveVisualizer:
             # Plot surface points
             points = self.surface.points
             scatter = self.ax.scatter(points[:, 0], points[:, 1], points[:, 2],
-                                    c=points[:, 1], cmap='terrain', 
-                                    s=2, alpha=float(self.surface_alpha_var.get()),
+                                    c=points[:, 1], cmap='terrain',
+                                    s=16, alpha=float(self.surface_alpha_var.get()),
+                                    edgecolors='k', linewidths=0.2,
                                     label='Surface')
         
         if self.toolpath and self.show_toolpath_var.get():
@@ -252,7 +253,7 @@ class InteractiveVisualizer:
             if any(~is_rapid):
                 treatment_pos = positions[~is_rapid]
                 self.ax.plot(treatment_pos[:, 0], treatment_pos[:, 1], treatment_pos[:, 2],
-                           'b-', linewidth=2, alpha=0.8, label='Treatment Path')
+                           color='#ffd200', linewidth=2.5, alpha=0.9, label='Treatment Path')
             
             # Plot rapid moves
             if self.show_rapid_var.get() and any(is_rapid):

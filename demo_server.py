@@ -1,0 +1,405 @@
+#!/usr/bin/env python3
+"""
+Unified Industrial Demo Server for Cold Plasma Treatment System
+
+Single FastAPI server combining:
+- Thermal camera streaming (MLX90640)
+- 3D model upload and conversion
+- Toolpath generation (gcodegen)
+- Embedded HTML interface
+"""
+
+import asyncio
+import json
+import os
+import time
+import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, Dict
+from threading import Lock
+
+import numpy as np
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from pydantic import BaseModel
+
+# Import backend modules
+from backend.model_storage import save_uploaded_model, get_model, cleanup_old_files
+from backend.path_generator import generate_toolpath
+import open3d as o3d
+
+# Import sensor
+try:
+    from backend.sensors.mlx90640 import MLX90640Sensor
+    MLX_AVAILABLE = True
+except ImportError:
+    MLX90640Sensor = None
+    MLX_AVAILABLE = False
+    print("[WARN] MLX90640 sensor not available")
+
+# Import HTML template
+try:
+    from demo_server_html import HTML_TEMPLATE
+except ImportError:
+    HTML_TEMPLATE = "<html><body><h1>Error: HTML template not found</h1></body></html>"
+
+app = FastAPI(title="Cold Plasma Treatment System", version="2.0.0")
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Global state
+mlx_sensor: Optional[MLX90640Sensor] = None
+sensor_lock = Lock()
+generation_results: Dict[str, dict] = {}  # Store generated toolpaths by ID
+
+# WebSocket connection managers
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+    
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+    
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+    
+    async def broadcast(self, data: dict):
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(data)
+            except Exception:
+                pass
+
+thermal_manager = ConnectionManager()
+progress_manager = ConnectionManager()
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize sensors on startup."""
+    global mlx_sensor
+    
+    if MLX_AVAILABLE:
+        try:
+            mlx_sensor = MLX90640Sensor()
+            print("[OK] MLX90640 initialized")
+        except Exception as e:
+            print(f"[WARN] MLX90640 initialization failed: {e}")
+            mlx_sensor = None
+    else:
+        print("[WARN] MLX90640 libraries not available")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown."""
+    global mlx_sensor
+    if mlx_sensor:
+        try:
+            mlx_sensor.close()
+        except Exception:
+            pass
+
+
+# ============================================================================
+# HTML Interface
+# ============================================================================
+
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    """Serve the main HTML interface."""
+    return HTML_TEMPLATE
+
+
+# ============================================================================
+# API Endpoints
+# ============================================================================
+
+@app.get("/api/health")
+async def health():
+    """Health check endpoint."""
+    return {
+        "status": "healthy",
+        "mlx90640": mlx_sensor is not None,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@app.post("/api/upload")
+async def upload_model(file: UploadFile = File(...)):
+    """Upload a 3D model file (PLY or OBJ) and get model metadata."""
+    try:
+        content = await file.read()
+        model_id, metadata = save_uploaded_model(content, file.filename)
+        cleanup_old_files()
+        
+        return {
+            "model_id": model_id,
+            "bounds": metadata["bounds"],
+            "point_count": metadata["point_count"],
+            "filename": metadata["filename"]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Upload failed: {str(e)}")
+
+
+@app.get("/api/models/{model_id}")
+async def get_model_file(model_id: str):
+    """Get model file (PLY format) by model_id."""
+    model_path = get_model(model_id)
+    if not model_path or not model_path.exists():
+        raise HTTPException(status_code=404, detail="Model not found")
+    
+    return FileResponse(
+        str(model_path),
+        media_type="application/octet-stream",
+        filename=f"{model_id}.ply"
+    )
+
+
+@app.get("/api/load-demo-hand")
+async def load_demo_hand():
+    """Load the demo hand model (Rigged Hand1.obj)."""
+    demo_path = Path("gcodegen/Rigged Hand1.obj")
+    
+    if not demo_path.exists():
+        raise HTTPException(status_code=404, detail="Demo hand file not found at gcodegen/Rigged Hand1.obj")
+    
+    try:
+        with open(demo_path, 'rb') as f:
+            content = f.read()
+        
+        model_id, metadata = save_uploaded_model(content, "Rigged Hand1.obj")
+        
+        return {
+            "model_id": model_id,
+            "bounds": metadata["bounds"],
+            "point_count": metadata["point_count"],
+            "filename": metadata["filename"]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load demo hand: {str(e)}")
+
+
+class GenerateRequest(BaseModel):
+    model_id: str
+    bounds: dict
+    config: dict
+
+
+@app.post("/api/generate")
+async def generate_toolpath_endpoint(request: GenerateRequest):
+    """Generate toolpath for selected area of model."""
+    try:
+        # Get model file
+        model_path = get_model(request.model_id)
+        if not model_path or not model_path.exists():
+            raise HTTPException(status_code=404, detail="Model not found")
+        
+        # Load point cloud
+        pcd = o3d.io.read_point_cloud(str(model_path))
+        if len(pcd.points) == 0:
+            mesh = o3d.io.read_triangle_mesh(str(model_path))
+            if len(mesh.vertices) == 0:
+                raise ValueError("Model file contains no points or vertices")
+            pcd = mesh.sample_points_uniformly(number_of_points=2000)
+        
+        points = np.asarray(pcd.points)
+        
+        # Progress callback
+        def progress_callback(progress: int, status: str):
+            asyncio.create_task(progress_manager.broadcast({
+                "type": "progress",
+                "progress": progress,
+                "status": status
+            }))
+        
+        # Generate toolpath
+        result = generate_toolpath(
+            points=points,
+            bounds=request.bounds,
+            config=request.config,
+            progress_callback=progress_callback
+        )
+        
+        # Store result
+        result_id = str(uuid.uuid4())
+        generation_results[result_id] = result
+        
+        return {
+            "result_id": result_id,
+            "toolpath": result["toolpath"],
+            "stats": result["stats"]
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Path generation failed: {str(e)}")
+
+
+@app.get("/api/results/{result_id}")
+async def get_results(result_id: str):
+    """Get generated toolpath results."""
+    if result_id not in generation_results:
+        raise HTTPException(status_code=404, detail="Result not found")
+    return generation_results[result_id]
+
+
+class ExportRequest(BaseModel):
+    result_id: str
+
+
+@app.post("/api/export/gcode")
+async def export_gcode(request: ExportRequest):
+    """Export toolpath as G-code file."""
+    if request.result_id not in generation_results:
+        raise HTTPException(status_code=404, detail="Result not found")
+    
+    result = generation_results[request.result_id]
+    toolpath = result["toolpath"]
+    
+    # Generate G-code
+    from gcodegen.main import ResultsManager, ToolpathPoint
+    
+    toolpath_points = []
+    for pt_data in toolpath:
+        toolpath_points.append(ToolpathPoint(
+            position=np.array(pt_data['position']),
+            normal=np.array(pt_data['normal']),
+            feed_rate=pt_data['feed_rate'],
+            is_rapid=pt_data['is_rapid']
+        ))
+    
+    # Save to temp file
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    gcode_path = f"toolpath_{timestamp}.gcode"
+    ResultsManager.export_gcode(toolpath_points, gcode_path)
+    
+    return FileResponse(
+        gcode_path,
+        media_type="text/plain",
+        filename=f"toolpath_{timestamp}.gcode"
+    )
+
+
+@app.post("/api/export/csv")
+async def export_csv(request: ExportRequest):
+    """Export toolpath as CSV file."""
+    if request.result_id not in generation_results:
+        raise HTTPException(status_code=404, detail="Result not found")
+    
+    result = generation_results[request.result_id]
+    toolpath = result["toolpath"]
+    
+    # Generate CSV
+    from gcodegen.main import ResultsManager, ToolpathPoint
+    
+    toolpath_points = []
+    for pt_data in toolpath:
+        toolpath_points.append(ToolpathPoint(
+            position=np.array(pt_data['position']),
+            normal=np.array(pt_data['normal']),
+            feed_rate=pt_data['feed_rate'],
+            is_rapid=pt_data['is_rapid']
+        ))
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    csv_path = Path(f"toolpath_{timestamp}.csv")
+    ResultsManager.export_csv(toolpath_points, str(csv_path))
+    
+    return FileResponse(
+        str(csv_path),
+        media_type="text/csv",
+        filename=f"toolpath_{timestamp}.csv"
+    )
+
+
+# ============================================================================
+# WebSocket Endpoints
+# ============================================================================
+
+@app.websocket("/ws/thermal")
+async def websocket_thermal(websocket: WebSocket):
+    """WebSocket endpoint for thermal camera streaming."""
+    await thermal_manager.connect(websocket)
+    
+    try:
+        while True:
+            if mlx_sensor:
+                try:
+                    with sensor_lock:
+                        frame = mlx_sensor.read_frame()
+                        max_temp = mlx_sensor.get_max_temp()
+                        min_temp = float(frame.min())
+                        mean_temp = float(frame.mean())
+                    
+                    await websocket.send_json({
+                        "thermal": frame.tolist(),
+                        "max_temp": float(max_temp),
+                        "min_temp": min_temp,
+                        "mean_temp": mean_temp,
+                        "timestamp": datetime.now().isoformat(),
+                    })
+                except Exception as e:
+                    await websocket.send_json({
+                        "error": str(e),
+                        "timestamp": datetime.now().isoformat(),
+                    })
+            else:
+                await websocket.send_json({
+                    "error": "Sensor not available",
+                    "timestamp": datetime.now().isoformat(),
+                })
+            
+            # Stream at ~4Hz
+            await asyncio.sleep(0.25)
+    
+    except WebSocketDisconnect:
+        thermal_manager.disconnect(websocket)
+    except Exception as e:
+        print(f"Thermal WebSocket error: {e}")
+        thermal_manager.disconnect(websocket)
+
+
+@app.websocket("/ws/progress")
+async def websocket_progress(websocket: WebSocket):
+    """WebSocket endpoint for path generation progress."""
+    await progress_manager.connect(websocket)
+    
+    try:
+        while True:
+            # Keep connection alive, progress updates come from generate endpoint
+            await asyncio.sleep(1)
+            await websocket.send_json({"type": "ping"})
+    except WebSocketDisconnect:
+        progress_manager.disconnect(websocket)
+    except Exception as e:
+        print(f"Progress WebSocket error: {e}")
+        progress_manager.disconnect(websocket)
+
+
+# ============================================================================
+# Main Entry Point
+# ============================================================================
+
+if __name__ == "__main__":
+    import uvicorn
+    
+    print("=" * 70)
+    print("Cold Plasma Treatment System - Unified Demo Server")
+    print("=" * 70)
+    print(f"\n[INFO] Starting server on http://0.0.0.0:8000")
+    print(f"[INFO] Open http://localhost:8000 in your browser")
+    print("\n" + "=" * 70)
+    
+    uvicorn.run(app, host="0.0.0.0", port=8000)

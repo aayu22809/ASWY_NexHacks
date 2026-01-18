@@ -111,20 +111,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             image-rendering: auto;
         }
         
-        .colorbar {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            width: 20px;
-            height: 150px;
-            border-radius: 2px;
-            border: 1px solid rgba(255,255,255,0.3);
-        }
-        
-        #colorbarCanvas {
-            width: 100%;
-            height: 100%;
-        }
         
         .thermal-stats {
             display: grid;
@@ -297,8 +283,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             <div class="panel-title">Thermal Camera</div>
             <div class="thermal-container">
                 <div class="heatmap-wrapper">
-                    <canvas id="thermalCanvas" width="640" height="480"></canvas>
-                    <canvas id="colorbarCanvas" class="colorbar"></canvas>
+                    <canvas id="thermalCanvas" width="320" height="240"></canvas>
                 </div>
                 <div class="thermal-stats">
                     <div class="stat-box">
@@ -476,8 +461,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         let startTime = Date.now();
         const thermalCanvas = document.getElementById('thermalCanvas');
         const thermalCtx = thermalCanvas.getContext('2d');
-        const colorbarCanvas = document.getElementById('colorbarCanvas');
-        const colorbarCtx = colorbarCanvas.getContext('2d');
         
         // Jet colormap function (from test_mlx90640_http.py)
         function jetColormap(value) {
@@ -498,20 +481,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             
             return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
         }
-        
-        // Draw colorbar
-        function drawColorbar() {
-            const gradient = colorbarCtx.createLinearGradient(0, colorbarCanvas.height, 0, 0);
-            for (let i = 0; i <= 10; i++) {
-                const value = i / 10;
-                const [r, g, b] = jetColormap(value);
-                gradient.addColorStop(value, `rgb(${r},${g},${b})`);
-            }
-            colorbarCtx.fillStyle = gradient;
-            colorbarCtx.fillRect(0, 0, colorbarCanvas.width, colorbarCanvas.height);
-        }
-        
-        drawColorbar();
         
         // Draw thermal heatmap (from test_mlx90640_http.py)
         function drawHeatmap(thermalData, minTemp, maxTemp) {

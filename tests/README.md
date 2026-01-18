@@ -43,6 +43,9 @@ pip install -r backend/requirements.txt
 
 # Or install individually:
 pip install adafruit-circuitpython-mlx90640 adafruit-blinka numpy RPi.GPIO
+
+# For GUI visualization (optional):
+pip install matplotlib
 ```
 
 ### GPIO Permissions
@@ -64,11 +67,16 @@ sudo usermod -a -G gpio $USER
 
 ### MLX90640 Thermal Camera Test
 
-Test the thermal camera with real-time frame capture and visualization:
+There are two versions available: **ASCII terminal version** and **GUI version** with colored heatmap.
+
+#### ASCII Terminal Version
+
+Test the thermal camera with ASCII visualization (works over SSH without X11):
 
 ```bash
 # From project root directory
-python3 tests/test_mlx90640.py
+python3 -m tests.test_mlx90640
+# Or: PYTHONPATH=. python3 tests/test_mlx90640.py
 ```
 
 **What it does:**
@@ -101,6 +109,47 @@ Thermal Heatmap (32x24):
   . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   ...
 ```
+
+#### GUI Version (Colored Heatmap)
+
+Test the thermal camera with a graphical window showing a colored heatmap:
+
+```bash
+# From project root directory
+python3 -m tests.test_mlx90640_gui
+# Or: PYTHONPATH=. python3 tests/test_mlx90640_gui.py
+```
+
+**Requirements:**
+- Matplotlib installed: `pip install matplotlib`
+- Display available (desktop environment or X11 forwarding for SSH)
+
+**What it does:**
+- Initializes I2C bus and detects MLX90640 sensor
+- Opens a matplotlib window with real-time colored heatmap
+- Uses Jet colormap (blue → green → yellow → red)
+- Displays live temperature statistics overlay
+- Shows color bar with temperature scale
+- Updates at 2 Hz refresh rate
+- Runs until window is closed or Ctrl+C is pressed
+
+**Features:**
+- Real-time colored thermal visualization (32x24 pixels, interpolated)
+- Temperature color bar on the right side
+- Statistics text overlay (top-left corner)
+- Frame rate and elapsed time display
+- Visual warnings when temperature exceeds thresholds (38°C and 40°C)
+
+**For SSH with X11 Forwarding:**
+```bash
+# Connect with X11 forwarding enabled
+ssh -X pi@raspberrypi.local
+
+# Then run the GUI test
+python3 -m tests.test_mlx90640_gui
+```
+
+**Note:** The GUI version provides much better visualization than ASCII, but requires a display. Use the ASCII version for headless systems or SSH without X11.
 
 ### IR Reflective Obstacle Sensor Test
 
@@ -188,6 +237,33 @@ Solutions:
 - Check I2C bus speed (may need to reduce refresh rate)
 - Verify no loose connections
 
+**Problem: GUI version shows "No module named 'backend'"**
+
+Solutions:
+1. **Run as a module from project root:**
+   ```bash
+   python3 -m tests.test_mlx90640_gui
+   ```
+
+2. **Or set PYTHONPATH:**
+   ```bash
+   PYTHONPATH=. python3 tests/test_mlx90640_gui.py
+   ```
+
+3. **Verify you're in the project root directory:**
+   ```bash
+   pwd
+   # Should show: /path/to/ASWY_NexHacks
+   ```
+
+**Problem: GUI window doesn't appear (SSH)**
+
+Solutions:
+- Enable X11 forwarding: `ssh -X pi@raspberrypi.local`
+- Check DISPLAY variable: `echo $DISPLAY` (should not be empty)
+- Install X11 server on your local machine (XQuartz for Mac, Xming for Windows)
+- For headless systems, use the ASCII version instead: `test_mlx90640.py`
+
 ### IR Sensor Issues
 
 **Problem: "Permission denied" or "GPIO library not available"**
@@ -254,9 +330,10 @@ These test scripts are designed to be standalone for hardware verification. Once
 
 ```
 tests/
-├── README.md              # This file
-├── test_mlx90640.py       # MLX90640 thermal camera test
-└── test_ir_sensor.py      # IR obstacle sensor test
+├── README.md                  # This file
+├── test_mlx90640.py           # MLX90640 thermal camera test (ASCII)
+├── test_mlx90640_gui.py       # MLX90640 thermal camera test (GUI)
+└── test_ir_sensor.py          # IR obstacle sensor test
 ```
 
 ## Next Steps

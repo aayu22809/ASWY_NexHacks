@@ -1,6 +1,7 @@
 """FastAPI server for Cold Plasma Robot Arm control system."""
 
 import asyncio
+import csv
 import json
 import os
 from datetime import datetime
@@ -17,12 +18,15 @@ from backend.config import (
     API_HOST,
     API_PORT,
     CORS_ORIGINS,
+    MLX90640_REFRESH_RATE,
     REALSENSE_CAPTURE_DIR,
+    THERMAL_LOG_PATH,
 )
 from backend.sensors.mlx90640 import MLX90640Sensor
 from backend.sensors.ir_obstacle import IRObstacleSensor
 from backend.sensors.realsense import RealSenseCapture
 from backend.executor import ExecutionEngine
+from backend import thermal_state
 
 app = FastAPI(title="Cold Plasma Robot Arm API", version="1.0.0")
 
@@ -39,6 +43,7 @@ app.add_middleware(
 mlx_sensor: Optional[MLX90640Sensor] = None
 ir_sensor: Optional[IRObstacleSensor] = None
 executor: Optional[ExecutionEngine] = None
+thermal_log_task: Optional[asyncio.Task] = None
 
 # WebSocket connection manager
 class ConnectionManager:
@@ -61,6 +66,45 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+def _ensure_thermal_log_file() -> None:
+    log_dir = os.path.dirname(THERMAL_LOG_PATH)
+    if log_dir:
+        Path(log_dir).mkdir(exist_ok=True)
+    if not os.path.exists(THERMAL_LOG_PATH):
+        with open(THERMAL_LOG_PATH, "w", newline="") as f:
+            writer = csv.writer(f)
+                writer.writerow(
+                    ["timestamp", "max_temp_c", "min_temp_c", "mean_temp_c"]
+                )
+
+def _append_thermal_log(timestamp: str, max_temp: float, min_temp: float, mean_temp: float) -> None:
+    _ensure_thermal_log_file()
+    with open(THERMAL_LOG_PATH, "a", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            [timestamp, f"{max_temp:.2f}", f"{min_temp:.2f}", f"{mean_temp:.2f}"]
+        )
+
+async def _thermal_log_loop() -> None:
+    sleep_s = 1.0 / max(MLX90640_REFRESH_RATE, 0.1)
+    while True:
+        if not mlx_sensor:
+            await asyncio.sleep(sleep_s)
+            continue
+        try:
+            frame = mlx_sensor.read_frame()
+            timestamp = datetime.now().isoformat()
+            thermal_state.set_from_frame(frame, timestamp=timestamp, source="mlx90640")
+            snap = thermal_state.snapshot()
+            _append_thermal_log(
+                timestamp=timestamp,
+                max_temp=float(snap["max_temp"]),
+                min_temp=float(snap["min_temp"]),
+                mean_temp=float(snap["mean_temp"]),
+            )
+        except Exception:
+            pass
+        await asyncio.sleep(sleep_s)
 
 # Request/Response models
 class ScanResponse(BaseModel):
@@ -92,10 +136,17 @@ class StatusResponse(BaseModel):
     current_position: Optional[dict] = None
 
 
+class TempIngest(BaseModel):
+    temp_c: float
+    ambient_c: Optional[float] = None
+    source: Optional[str] = "pi5"
+    timestamp: Optional[str] = None
+
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize sensors on startup."""
-    global mlx_sensor, ir_sensor, executor
+    global mlx_sensor, ir_sensor, executor, thermal_log_task
     
     try:
         mlx_sensor = MLX90640Sensor()
@@ -116,12 +167,13 @@ async def startup_event():
     
     # Create capture directory
     Path(REALSENSE_CAPTURE_DIR).mkdir(exist_ok=True)
+    thermal_log_task = asyncio.create_task(_thermal_log_loop())
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown."""
-    global mlx_sensor, ir_sensor, executor
+    global mlx_sensor, ir_sensor, executor, thermal_log_task
     
     if mlx_sensor:
         mlx_sensor.close()
@@ -129,6 +181,8 @@ async def shutdown_event():
         ir_sensor.close()
     if executor:
         executor.stop()
+    if thermal_log_task:
+        thermal_log_task.cancel()
 
 
 @app.get("/health")
@@ -272,6 +326,25 @@ async def get_status():
     )
 
 
+@app.post("/ingest/temp")
+async def ingest_temp(payload: TempIngest):
+    timestamp = payload.timestamp or datetime.now().isoformat()
+    thermal_state.set_from_temp(
+        temp_c=payload.temp_c,
+        ambient_c=payload.ambient_c,
+        timestamp=timestamp,
+        source=payload.source,
+    )
+    snap = thermal_state.snapshot()
+    _append_thermal_log(
+        timestamp=timestamp,
+        max_temp=float(snap["max_temp"]),
+        min_temp=float(snap["min_temp"]),
+        mean_temp=float(snap["mean_temp"]),
+    )
+    return {"status": "ok", "timestamp": timestamp}
+
+
 @app.websocket("/ws/sensors")
 async def websocket_sensors(websocket: WebSocket):
     """WebSocket endpoint for real-time sensor streaming."""
@@ -279,18 +352,10 @@ async def websocket_sensors(websocket: WebSocket):
     
     try:
         while True:
-            # Read sensor data
-            thermal_frame = None
-            max_temp = None
+            snap = thermal_state.snapshot()
+            thermal_frame = snap["frame"]
+            max_temp = snap["max_temp"]
             obstacle_detected = False
-            
-            if mlx_sensor:
-                try:
-                    thermal_frame = mlx_sensor.read_frame()
-                    max_temp = mlx_sensor.get_max_temp()
-                except Exception:
-                    pass
-            
             if ir_sensor:
                 try:
                     obstacle_detected = ir_sensor.is_blocked()
@@ -302,7 +367,8 @@ async def websocket_sensors(websocket: WebSocket):
                 "thermal": thermal_frame.tolist() if thermal_frame is not None else None,
                 "max_temp": float(max_temp) if max_temp is not None else None,
                 "obstacle": obstacle_detected,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": snap["timestamp"] or datetime.now().isoformat(),
+                "source": snap["source"],
             })
             
             # Stream at ~5Hz

@@ -224,6 +224,22 @@ class ThermalSafetyAgent:
         state_f = dict(state)
         state_f["current_temp"] = filt["temp_ema"]
 
+        # Hard failsafe: if measured temp is already unsafe, stop immediately.
+        if state["current_temp"] >= self.max_temp:
+            out = {
+                "action": "stop",
+                "predicted_temp": float(state["current_temp"]),
+                "temp_ema": float(filt["temp_ema"]),
+                "dTdt": float(filt["dTdt"]),
+                "next_speed": 0.0,
+                "next_power": 0.0,
+                "next_standoff_mm": float(state.get("standoff_mm", 10.0)),
+                "reason": f"Failsafe: current temp {state['current_temp']:.2f}C >= limit {self.max_temp:.2f}C",
+            }
+            self._last_action = "stop"
+            self._last_action_t = now
+            return out
+
         # Candidate actions the agent can choose from
         base_speed = float(state.get("planned_speed", 0.0))
         base_power = float(state.get("plasma_power", 100.0))

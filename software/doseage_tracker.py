@@ -121,7 +121,7 @@ class DoseAccumulator:
     def _ensure_log_header(self):
         header = ['ts', 'x','y','z', 'voxel_idx', 'dose_added', 'voxel_dose', 'neighborhood_max',
                   'flow_cfm', 'spot_diam_mm', 'depth_mm', 'coupling_eff', 'dose_mode',
-                  'power_pct','standoff_mm','speed_mm_s','dt_s','action','reason']
+                  'power_pct','standoff_mm','speed_mm_s','dt_s','action','reason','temp_c']
         if not os.path.exists(self.log_path):
             with open(self.log_path, 'w', newline='') as f:
                 writer = csv.writer(f)
@@ -148,6 +148,7 @@ class DoseAccumulator:
                 row.get('dt_s'),
                 row.get('action'),
                 row.get('reason'),
+                row.get('temp_c'),
             ])
 
     # ---------- public API ----------
@@ -158,6 +159,7 @@ class DoseAccumulator:
         standoff_mm: float,
         speed_mm_s: float,
         dt_s: float,
+        temp_c: Optional[float] = None,
         flow_cfm: Optional[float] = None,
         spot_diam_mm: Optional[float] = None,
         depth_mm: Optional[float] = None,
@@ -263,6 +265,7 @@ class DoseAccumulator:
             'dt_s': dt_s,
             'action': action,
             'reason': reason,
+            'temp_c': temp_c,
         })
 
         return {
@@ -271,7 +274,8 @@ class DoseAccumulator:
             'neighborhood_max': neigh_max,
             'action': action,
             'reason': reason,
-            'voxel_idx': idx
+            'voxel_idx': idx,
+            'temp_c': temp_c,
         }
 
     def get_dose_at(self, pose_xyz: Tuple[float, float, float]) -> float:

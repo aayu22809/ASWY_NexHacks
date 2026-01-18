@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -33,8 +33,14 @@ except ImportError:
     print("[WARN] RealSense libraries not available. 3D scanning disabled.")
 
 from backend.executor import ExecutionEngine
+from backend.model_storage import save_uploaded_model, get_model, cleanup_old_files
+from backend.path_generator import generate_toolpath, filter_points_by_bounds
+import open3d as o3d
 
 app = FastAPI(title="Cold Plasma Robot Arm API", version="1.0.0")
+
+# Generation progress WebSocket manager
+generation_manager = ConnectionManager()
 
 # CORS middleware
 app.add_middleware(
@@ -368,6 +374,118 @@ async def websocket_sensors(websocket: WebSocket):
     except Exception as e:
         print(f"WebSocket error: {e}")
         manager.disconnect(websocket)
+
+
+# Model upload endpoint
+@app.post("/upload-model")
+async def upload_model(file: UploadFile = File(...)):
+    """Upload a 3D model file (PLY or OBJ) and get model metadata."""
+    try:
+        # Read file content
+        content = await file.read()
+        
+        # Save and process
+        model_id, metadata = save_uploaded_model(content, file.filename)
+        
+        # Cleanup old files periodically
+        cleanup_old_files()
+        
+        return {
+            "model_id": model_id,
+            "bounds": metadata["bounds"],
+            "point_count": metadata["point_count"],
+            "filename": metadata["filename"]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Upload failed: {str(e)}")
+
+
+# Get model file endpoint
+@app.get("/models/{model_id}")
+async def get_model_file(model_id: str):
+    """Get model file (PLY format) by model_id."""
+    model_path = get_model(model_id)
+    if not model_path or not model_path.exists():
+        raise HTTPException(status_code=404, detail="Model not found")
+    
+    return FileResponse(
+        str(model_path),
+        media_type="application/octet-stream",
+        filename=f"{model_id}.ply"
+    )
+
+
+# Generate toolpath endpoint
+class GenerateToolpathRequest(BaseModel):
+    model_id: str
+    bounds: dict  # {"x_min": float, "x_max": float, "z_min": float, "z_max": float}
+    config: dict  # ToolpathConfig fields
+
+
+@app.post("/generate-toolpath")
+async def generate_toolpath_endpoint(request: GenerateToolpathRequest):
+    """Generate toolpath for selected area of model."""
+    try:
+        # Get model file
+        model_path = get_model(request.model_id)
+        if not model_path or not model_path.exists():
+            raise HTTPException(status_code=404, detail="Model not found")
+        
+        # Load point cloud
+        pcd = o3d.io.read_point_cloud(str(model_path))
+        if len(pcd.points) == 0:
+            # Try as mesh
+            mesh = o3d.io.read_triangle_mesh(str(model_path))
+            if len(mesh.vertices) == 0:
+                raise ValueError("Model file contains no points or vertices")
+            pcd = mesh.sample_points_uniformly(number_of_points=2000)
+        
+        points = np.asarray(pcd.points)
+        
+        # Progress callback for WebSocket
+        def progress_callback(progress: int, status: str):
+            # Broadcast to WebSocket connections synchronously
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(generation_manager.broadcast({
+                    "type": "progress",
+                    "progress": progress,
+                    "status": status
+                }))
+        
+        # Generate toolpath
+        result = generate_toolpath(
+            points=points,
+            bounds=request.bounds,
+            config=request.config,
+            progress_callback=progress_callback
+        )
+        
+        return {
+            "toolpath": result["toolpath"],
+            "stats": result["stats"]
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Path generation failed: {str(e)}")
+
+
+# Generation progress WebSocket
+@app.websocket("/ws/generation")
+async def websocket_generation(websocket: WebSocket):
+    """WebSocket endpoint for toolpath generation progress."""
+    await generation_manager.connect(websocket)
+    
+    try:
+        while True:
+            # Keep connection alive, progress updates come from generate_toolpath_endpoint
+            await asyncio.sleep(1)
+            await websocket.send_json({"type": "ping"})
+    except WebSocketDisconnect:
+        generation_manager.disconnect(websocket)
+    except Exception as e:
+        print(f"Generation WebSocket error: {e}")
+        generation_manager.disconnect(websocket)
 
 
 if __name__ == "__main__":

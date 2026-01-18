@@ -29,8 +29,10 @@ try:
 except ImportError as e:
     print(f"[ERROR] Failed to import IRObstacleSensor: {e}")
     print("\nMake sure you're running from the project root and dependencies are installed:")
-    print("  pip install RPi.GPIO")
-    print("\nNote: GPIO access requires root privileges or GPIO group membership")
+    print("  For Raspberry Pi 5: sudo apt-get install python3-lgpio")
+    print("  For Raspberry Pi 4/earlier: pip install RPi.GPIO")
+    print("  Or use pip: pip install rpi-lgpio")
+    print("\nNote: GPIO access may require root privileges or GPIO group membership")
     sys.exit(1)
 
 
@@ -85,13 +87,17 @@ class IRSensorTest:
         except Exception as e:
             print(f"[ERROR] Failed to initialize sensor: {e}")
             print("\nTroubleshooting:")
-            print("  1. Check GPIO permissions:")
+            print("  1. Install GPIO library:")
+            print("     - For Raspberry Pi 5: sudo apt-get install python3-lgpio")
+            print("     - For Raspberry Pi 4/earlier: pip install RPi.GPIO")
+            print("     - Or use pip: pip install rpi-lgpio")
+            print("  2. Check GPIO permissions:")
             print("     - Run with sudo: sudo python3 test_ir_sensor.py")
             print("     - Or add user to gpio group: sudo usermod -a -G gpio $USER")
-            print("  2. Verify wiring connections")
-            print("  3. Check sensor power supply (5V or 3.3V)")
-            print("  4. Verify GPIO pin number matches your wiring")
-            print("  5. Test GPIO manually: gpio readall (wiringPi) or gpioinfo")
+            print("  3. Verify wiring connections")
+            print("  4. Check sensor power supply (5V or 3.3V)")
+            print("  5. Verify GPIO pin number matches your wiring")
+            print("  6. Test GPIO manually: gpio readall (wiringPi) or gpioinfo")
             return False
     
     def get_status_symbol(self, is_blocked):

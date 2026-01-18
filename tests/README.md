@@ -67,7 +67,10 @@ sudo usermod -a -G gpio $USER
 
 ### MLX90640 Thermal Camera Test
 
-There are two versions available: **ASCII terminal version** and **GUI version** with colored heatmap.
+There are three versions available:
+1. **ASCII terminal version** - Simple text-based output (SSH friendly)
+2. **GUI version** - Matplotlib window with colored heatmap (requires display)
+3. **HTTP server version** - WiFi network access for web browsers and React webapp
 
 #### ASCII Terminal Version
 
@@ -150,6 +153,103 @@ python3 -m tests.test_mlx90640_gui
 ```
 
 **Note:** The GUI version provides much better visualization than ASCII, but requires a display. Use the ASCII version for headless systems or SSH without X11.
+
+#### HTTP Server Version (WiFi Network Access)
+
+Test the thermal camera with an HTTP server that allows access from any device on your WiFi network:
+
+```bash
+# From project root directory
+python3 tests/test_mlx90640_http.py
+```
+
+**Requirements:**
+- Flask libraries: `sudo apt-get install python3-flask python3-flask-cors`
+- Both Pi and accessing device on same WiFi network
+- Port 5000 available (not blocked by firewall)
+
+**What it does:**
+- Creates HTTP server on `0.0.0.0:5000` (accessible from network)
+- Streams thermal data via WebSocket at `/ws/stream`
+- Provides REST API endpoints (`/api/health`, `/api/thermal`, `/api/thermal/stats`)
+- Serves built-in HTML test page with real-time heatmap
+- Compatible with React webapp in `plasma-path-planner` folder
+
+**Access methods:**
+
+1. **Built-in test page** (quick verification):
+   ```
+   http://<pi-ip-address>:5000/
+   ```
+
+2. **React webapp** (full interface):
+   - Configure webapp with Pi's IP address (see `plasma-path-planner/WIFI_SETUP.md`)
+   - Run webapp: `cd plasma-path-planner && npm run dev`
+   - Navigate to Thermal Monitor page
+
+3. **Direct WebSocket** (custom integration):
+   ```javascript
+   const ws = new WebSocket('ws://192.168.1.100:5000/ws/stream');
+   ws.onmessage = (event) => {
+     const data = JSON.parse(event.data);
+     console.log(data.thermal, data.max_temp);
+   };
+   ```
+
+**Find your Pi's IP address:**
+```bash
+hostname -I
+# Output: 192.168.1.100 (use this IP)
+```
+
+**Example output:**
+```
+======================================================================
+MLX90640 Thermal Camera HTTP Server
+======================================================================
+
+[OK] MLX90640 sensor initialized successfully!
+
+[INFO] Starting server...
+[INFO] Host: 0.0.0.0
+[INFO] Port: 5000
+
+[OK] Server is running!
+
+📱 Access from this device:
+   http://localhost:5000/
+
+🌐 Access from other devices on the same network:
+   http://192.168.1.100:5000/
+
+🔌 WebSocket endpoint:
+   ws://192.168.1.100:5000/ws/stream
+```
+
+**WebSocket data format:**
+```json
+{
+  "thermal": [22.5, 22.7, ...],  // 768 values (24x32 grid)
+  "max_temp": 28.5,
+  "min_temp": 22.1,
+  "mean_temp": 24.3,
+  "obstacle": false,
+  "timestamp": "2026-01-18T10:30:45.123Z"
+}
+```
+
+**Use cases:**
+- Access thermal data from laptop/phone without SSH
+- Integrate with custom web applications
+- Multi-device monitoring (multiple browsers can connect simultaneously)
+- Remote monitoring on same WiFi network
+- Development and testing without direct Pi access
+
+**Troubleshooting:**
+- If connection fails, check both devices are on same WiFi network
+- Verify firewall allows port 5000: `sudo ufw allow 5000/tcp`
+- Test with REST API: `curl http://<pi-ip>:5000/api/health`
+- See full setup guide: `plasma-path-planner/WIFI_SETUP.md`
 
 ### IR Reflective Obstacle Sensor Test
 
@@ -333,6 +433,7 @@ tests/
 ├── README.md                  # This file
 ├── test_mlx90640.py           # MLX90640 thermal camera test (ASCII)
 ├── test_mlx90640_gui.py       # MLX90640 thermal camera test (GUI)
+├── test_mlx90640_http.py      # MLX90640 HTTP server (WiFi network access)
 └── test_ir_sensor.py          # IR obstacle sensor test
 ```
 

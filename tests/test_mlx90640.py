@@ -21,9 +21,11 @@ import time
 import signal
 import numpy as np
 from datetime import datetime
+from pathlib import Path
 
-# Add parent directory to path to import backend modules
-sys.path.insert(0, '..')
+# Add project root to path to import backend modules
+project_root = Path(__file__).parent.parent.absolute()
+sys.path.insert(0, str(project_root))
 
 try:
     from backend.sensors.mlx90640 import MLX90640Sensor

@@ -41,8 +41,8 @@ class MLX90640Sensor:
             self._mlx = adafruit_mlx90640.MLX90640(i2c, address=i2c_address)
             
             # Set refresh rate (0-7, where 7 is fastest ~64Hz)
-            # 2Hz refresh rate = setting 3
-            self._mlx.refresh_rate = adafruit_mlx90640.RefreshRate.REFRESH_2_HZ
+            # 4Hz refresh rate for better real-time visualization
+            self._mlx.refresh_rate = adafruit_mlx90640.RefreshRate.REFRESH_4_HZ
             
             print(f"[OK] MLX90640 initialized at address {hex(i2c_address)}")
             

@@ -81,7 +81,7 @@ python3 -m tests.test_mlx90640
 
 **What it does:**
 - Initializes I2C bus and detects MLX90640 sensor
-- Continuously captures thermal frames at 2 Hz
+- Continuously captures thermal frames at 4 Hz
 - Displays temperature statistics (min/max/mean)
 - Shows ASCII heatmap visualization (32x24 array)
 - Runs until Ctrl+C is pressed
@@ -130,7 +130,7 @@ python3 -m tests.test_mlx90640_gui
 - Uses Jet colormap (blue → green → yellow → red)
 - Displays live temperature statistics overlay
 - Shows color bar with temperature scale
-- Updates at 2 Hz refresh rate
+- Updates at 4 Hz refresh rate
 - Runs until window is closed or Ctrl+C is pressed
 
 **Features:**

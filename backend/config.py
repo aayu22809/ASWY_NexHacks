@@ -7,7 +7,7 @@ CORS_ORIGINS = ["http://localhost:5173", "http://localhost:3000"]
 
 # Sensor configuration
 MLX90640_I2C_ADDRESS = 0x33  # Default I2C address for MLX90640
-MLX90640_REFRESH_RATE = 2.0  # Hz
+MLX90640_REFRESH_RATE = 4.0  # Hz
 IR_OBSTACLE_GPIO_PIN = 18  # GPIO pin for IR obstacle sensor (adjust as needed)
 
 # Thermal safety thresholds

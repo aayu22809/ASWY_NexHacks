@@ -88,7 +88,7 @@ class ThermalGUITest:
             self.sensor = MLX90640Sensor()
             print("[OK] Sensor initialized successfully!")
             print(f"[INFO] I2C Address: 0x33")
-            print(f"[INFO] Refresh Rate: 2 Hz")
+            print(f"[INFO] Refresh Rate: 4 Hz")
             
             # Initialize matplotlib figure
             self.fig, self.ax = plt.subplots(figsize=(10, 7.5))
@@ -223,11 +223,11 @@ class ThermalGUITest:
         
         try:
             # Use FuncAnimation for real-time updates
-            # Interval in milliseconds (500ms = 2 Hz)
+            # Interval in milliseconds (250ms = 4 Hz)
             self.ani = animation.FuncAnimation(
                 self.fig,
                 self.animate,
-                interval=500,  # 2 Hz refresh rate
+                interval=250,  # 4 Hz refresh rate
                 blit=False,
                 cache_frame_data=False
             )

@@ -62,12 +62,12 @@ class ThermalTest:
             self.sensor = MLX90640Sensor()
             print("[OK] Sensor initialized successfully!")
             print(f"[INFO] I2C Address: 0x33")
-            print(f"[INFO] Refresh Rate: 2 Hz")
+            print(f"[INFO] Refresh Rate: 4 Hz")
             print("\n[INFO] Starting frame capture... (Press Ctrl+C to stop)")
             print("-" * 60)
             
             # Small delay to let sensor stabilize
-            time.sleep(0.5)
+            time.sleep(0.25)
             return True
             
         except Exception as e:
@@ -167,9 +167,9 @@ class ThermalTest:
                     print("\n" + "-" * 60)
                     print("Press Ctrl+C to stop")
                     
-                    # Wait for next frame (2 Hz = 0.5s interval)
+                    # Wait for next frame (4 Hz = 0.25s interval)
                     frame_duration = time.time() - frame_start
-                    sleep_time = max(0, 0.5 - frame_duration)
+                    sleep_time = max(0, 0.25 - frame_duration)
                     time.sleep(sleep_time)
                     
                 except Exception as e:

@@ -115,20 +115,16 @@ async def startup_event():
     
     try:
         from backend.config import (
-            IR_REFLECTIVE_ADC_CHANNEL,
+            IR_REFLECTIVE_GPIO_PIN,
             IR_REFLECTIVE_BASELINE_DISTANCE_MM,
             IR_REFLECTIVE_EMA_ALPHA,
-            IR_REFLECTIVE_SAMPLING_RATE_HZ,
-            IR_REFLECTIVE_ADC_RESOLUTION_BITS,
-            IR_REFLECTIVE_ADC_MAX_VOLTAGE
+            IR_REFLECTIVE_SAMPLING_RATE_HZ
         )
         ir_reflective_sensor = IRReflectiveSensor(
-            adc_channel=IR_REFLECTIVE_ADC_CHANNEL,
+            gpio_pin=IR_REFLECTIVE_GPIO_PIN,
             baseline_distance_mm=IR_REFLECTIVE_BASELINE_DISTANCE_MM,
             ema_alpha=IR_REFLECTIVE_EMA_ALPHA,
             sampling_rate_hz=IR_REFLECTIVE_SAMPLING_RATE_HZ,
-            adc_resolution_bits=IR_REFLECTIVE_ADC_RESOLUTION_BITS,
-            adc_max_voltage=IR_REFLECTIVE_ADC_MAX_VOLTAGE,
             use_mock=False  # Use real hardware
         )
         print("[OK] IR Reflective sensor initialized")

@@ -3,12 +3,34 @@
 GUI test script for IR Reflective Sensor with live visualization.
 
 Tests matplotlib dashboard performance and validates anomaly detection UI.
+
+Hardware Connections:
+
+Jetson Orin Nano:
+- VCC → Jetson 3.3V (Pin 1 or 17)
+- GND → Jetson GND (Pin 6)
+- DO  → Jetson GPIO17 (Pin 11)
+
+Raspberry Pi:
+- VCC → Pi 3.3V (Pin 1 or 17)
+- GND → Pi GND (Pin 6)
+- DO  → Pi GPIO17 (Pin 11)
 """
 
 import sys
+import os
 import time
 import signal
 sys.path.insert(0, '..')
+
+# Set matplotlib backend for Jetson compatibility
+try:
+    import matplotlib
+    if 'DISPLAY' not in os.environ:
+        os.environ['DISPLAY'] = ':0'
+    matplotlib.use('TkAgg')
+except Exception:
+    pass  # Fall back to default backend
 
 from backend.sensors.ir_reflective import IRReflectiveSensor
 

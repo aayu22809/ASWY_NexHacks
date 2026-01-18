@@ -6,27 +6,36 @@ The IR Reflective Sensor system provides continuous moisture detection, drying t
 
 ## Hardware Setup
 
-### Wiring to Jetson Orin Nano
+### Wiring to Jetson Orin Nano (Digital GPIO Mode)
 
-| IR Sensor Pin | Jetson Connection |
-|---------------|-------------------|
-| VCC           | 3.3V or 5V rail (check sensor spec) |
-| GND           | GND               |
-| Analog Out    | ADC Channel 0 (or ADS1115 if no native ADC) |
+**Note:** Jetson Orin Nano does NOT have native ADC on the GPIO header. The sensor operates in **digital GPIO mode**.
 
-### ADC Options
+| IR Sensor Pin | Jetson Connection | Pin Number |
+|---------------|-------------------|------------|
+| VCC           | 3.3V              | Pin 1 or 17|
+| GND           | GND               | Pin 6      |
+| DO (Digital Out) | GPIO17        | Pin 11     |
 
-**Option 1: Native Jetson ADC (Recommended)**
-- Jetson Orin Nano has built-in ADC accessible via `/sys/bus/iio/devices/iio:device0/`
-- Default channel: 0
-- Resolution: 12-bit (0-4095)
-- Voltage range: 0-3.3V
+**Digital Mode Operation:**
+- **LOW (0):** Wet/detected (high moisture)
+- **HIGH (1):** Dry/clear (low moisture)
+- Sensor outputs digital signal based on reflectance threshold
 
-**Option 2: ADS1115 I2C ADC Module**
-- If Jetson lacks native ADC, use ADS1115 breakout board
+### Wiring to Raspberry Pi
+
+Raspberry Pi can use either GPIO digital mode (same as Jetson) or ADC if available:
+
+**Digital GPIO Mode (Recommended):**
+| IR Sensor Pin | Pi Connection | Pin Number |
+|---------------|---------------|------------|
+| VCC           | 3.3V          | Pin 1 or 17|
+| GND           | GND           | Pin 6      |
+| DO            | GPIO17        | Pin 11     |
+
+**ADC Mode (Future - requires ADS1115):**
 - Connect analog out → ADS1115 analog input
-- Connect ADS1115 I2C → Jetson I2C bus
-- Update code to use ADS1115 library instead
+- Connect ADS1115 I2C → Pi I2C bus
+- Requires ADS1115 I2C ADC module
 
 ## Quick Start
 
@@ -46,8 +55,10 @@ pip install -r backend/requirements.txt
 from backend.sensors.ir_reflective import IRReflectiveSensor
 
 # Initialize sensor (uses mock data if hardware not available)
+# For Jetson: Uses GPIO digital mode automatically
+# For Raspberry Pi: Uses GPIO digital mode (can be extended for ADC)
 sensor = IRReflectiveSensor(
-    adc_channel=0,
+    gpio_pin=17,  # GPIO17 (BCM numbering)
     baseline_distance_mm=10.0,
     sampling_rate_hz=20.0
 )
@@ -57,6 +68,7 @@ metrics = sensor.compute_metrics()
 print(f"Moisture Index: {metrics['mi']:.3f}")
 print(f"Drying Rate: {metrics['drying_rate']:.4f} /sec")
 print(f"Roughness: {metrics['roughness']:.4f}")
+print(f"Digital Value: {metrics['raw_digital']} (0=wet, 1=dry)")
 ```
 
 ### 3. Calibration
@@ -69,21 +81,34 @@ python3 -m tests.calibrate_ir
 
 The calibration script will:
 1. Prompt you to place sensor 10mm above dry phantom
-2. Record baseline dry value
+2. Record baseline dry value (should be HIGH/1 in digital mode)
 3. Prompt you to place sensor 10mm above wet phantom
-4. Record baseline wet value
-5. Calculate normalization range
+4. Record baseline wet value (should be LOW/0 in digital mode)
+5. Verify digital thresholds
+
+**Digital Mode Notes:**
+- Dry surface should read HIGH (1)
+- Wet surface should read LOW (0)
+- If readings are inverted, check sensor wiring or adjust threshold
 
 ### 4. Live Visualization
 
 Start the live matplotlib dashboard:
 
 ```bash
+# For Jetson: Ensure DISPLAY is set or use VNC
+export DISPLAY=:0  # Or use VNC/remote desktop
 python3 -m tests.test_ir_reflective_gui
 ```
 
+**Jetson Matplotlib Setup:**
+- Backend is automatically set to `TkAgg` for compatibility
+- If GUI doesn't appear, check DISPLAY variable
+- For SSH: Use X11 forwarding: `ssh -X user@jetson`
+- Alternative: Use VNC or remote desktop
+
 This displays:
-- Raw IR intensity over time
+- Raw digital value over time (0=wet, 1=dry)
 - Moisture Index trend
 - Drying rate with threshold markers
 - Roughness index
@@ -284,25 +309,49 @@ python3 -m tests.calibrate_ir
 
 ## Troubleshooting
 
-### ADC Not Found
+### GPIO Not Found (Jetson)
 
-**Problem:** `[WARN] ADC path not found`
-
-**Solutions:**
-1. Check ADC channel number matches hardware
-2. Verify `/sys/bus/iio/devices/iio:device0/` exists
-3. Check permissions: `sudo chmod 666 /sys/bus/iio/devices/iio:device0/in_voltage*_raw`
-4. Use ADS1115 I2C module as alternative
-
-### Constant Zero Readings
-
-**Problem:** Sensor always reads 0
+**Problem:** `[WARN] No GPIO library available`
 
 **Solutions:**
-1. Check wiring (VCC, GND, Analog Out)
-2. Verify sensor power supply
-3. Test ADC with multimeter
+1. Install Jetson.GPIO: `pip install Jetson.GPIO`
+2. Verify GPIO pin number (default: GPIO17, Pin 11)
+3. Check wiring: VCC→Pin 1, GND→Pin 6, DO→Pin 11
+4. Verify sensor power: Check 3.3V with multimeter
+5. Test GPIO manually: `python3 -c "import Jetson.GPIO as GPIO; GPIO.setmode(GPIO.BCM); GPIO.setup(17, GPIO.IN); print(GPIO.input(17))"`
+
+### GPIO Not Found (Raspberry Pi)
+
+**Problem:** GPIO initialization fails
+
+**Solutions:**
+1. Install GPIO library: `pip install RPi.GPIO` or `pip install rpi-lgpio`
+2. For Pi 5: Use `rpi-lgpio` instead of `RPi.GPIO`
+3. Check permissions: May need `sudo` or add user to `gpio` group
+4. Verify pin number matches BCM numbering
+
+### Constant LOW Readings (Always Wet)
+
+**Problem:** Sensor always reads LOW (0) - always detecting wet
+
+**Solutions:**
+1. Check wiring (VCC, GND, DO pin)
+2. Verify sensor power supply (3.3V)
+3. Test GPIO pin manually (see GPIO troubleshooting)
 4. Check for loose connections
+5. Verify sensor is not stuck/occluded
+6. Check sensor threshold adjustment (if available)
+
+### Constant HIGH Readings (Always Dry)
+
+**Problem:** Sensor always reads HIGH (1) - never detecting wet
+
+**Solutions:**
+1. Verify sensor is working (test with wet surface)
+2. Check sensor distance from surface
+3. Verify DO pin connection
+4. Test with known wet sample
+5. Check sensor sensitivity adjustment
 
 ### Metrics Not Changing
 
@@ -314,15 +363,19 @@ python3 -m tests.calibrate_ir
 3. Ensure sensor is moving or surface is changing
 4. Verify calibration baselines are set
 
-### Visualization Not Updating
+### Visualization Not Updating (Jetson)
 
-**Problem:** Matplotlib dashboard frozen
+**Problem:** Matplotlib dashboard frozen or not appearing
 
 **Solutions:**
-1. Check matplotlib backend: `export MPLBACKEND=TkAgg`
-2. Verify X11 forwarding if using SSH
-3. Try non-GUI mode: `export DISPLAY=`
-4. Use mock data to test: `use_mock=True`
+1. Check DISPLAY variable: `echo $DISPLAY` (should be `:0` or `:10.0`)
+2. Set DISPLAY if missing: `export DISPLAY=:0`
+3. For SSH: Use X11 forwarding: `ssh -X user@jetson`
+4. Install X11 packages: `sudo apt-get install x11-apps`
+5. Test X11: `xeyes` or `xclock` should work
+6. Use VNC as alternative: `sudo apt-get install tigervnc-standalone-server`
+7. Check matplotlib backend: Script automatically uses `TkAgg`
+8. Try mock mode to test: `use_mock=True` in sensor initialization
 
 ### High Noise in Readings
 

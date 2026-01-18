@@ -3,10 +3,18 @@
 MLX90640 Thermal Camera GUI Test Script
 
 Hardware Connections:
+
+Raspberry Pi:
 - VCC → Pi 3.3V (Pin 1)
 - GND → Pi GND (Pin 6)
 - SDA → Pi SDA1 (GPIO2, Pin 3)
 - SCL → Pi SCL1 (GPIO3, Pin 5)
+
+Jetson Orin Nano:
+- VCC → Jetson 3.3V (Pin 1)
+- GND → Jetson GND (Pin 6)
+- SDA → Jetson SDA1/I2C1 (Pin 3)
+- SCL → Jetson SCL1/I2C1 (Pin 5)
 
 This script tests the MLX90640 thermal camera with a graphical GUI:
 - Real-time colored heatmap visualization (Jet colormap)
@@ -27,6 +35,14 @@ from datetime import datetime
 sys.path.insert(0, '..')
 
 try:
+    import matplotlib
+    # Set backend for Jetson compatibility (TkAgg works best with X11)
+    import os
+    if 'DISPLAY' not in os.environ:
+        # Try to set DISPLAY if not set (for SSH X11 forwarding)
+        os.environ['DISPLAY'] = ':0'
+    matplotlib.use('TkAgg')  # Use TkAgg backend for Jetson compatibility
+    
     import matplotlib.pyplot as plt
     import matplotlib.animation as animation
     from matplotlib.colors import Normalize
@@ -35,6 +51,13 @@ except ImportError:
     _HAVE_MATPLOTLIB = False
     print("[ERROR] Matplotlib not installed. Install with: pip install matplotlib")
     sys.exit(1)
+except Exception as e:
+    print(f"[WARN] Matplotlib backend issue: {e}")
+    print("[INFO] Trying default backend...")
+    import matplotlib.pyplot as plt
+    import matplotlib.animation as animation
+    from matplotlib.colors import Normalize
+    _HAVE_MATPLOTLIB = True
 
 try:
     from backend.sensors.mlx90640 import MLX90640Sensor
@@ -135,11 +158,27 @@ class ThermalGUITest:
         except Exception as e:
             print(f"[ERROR] Failed to initialize: {e}")
             print("\nTroubleshooting:")
-            print("  1. Check I2C is enabled: sudo raspi-config → Interface Options → I2C")
-            print("  2. Verify wiring connections")
-            print("  3. Check sensor is powered (3.3V)")
-            print("  4. Verify I2C address: sudo i2cdetect -y 1")
-            print("  5. For SSH: Enable X11 forwarding with -X flag")
+            platform_info = ""
+            if os.path.exists('/proc/device-tree/model'):
+                with open('/proc/device-tree/model', 'r') as f:
+                    model = f.read().strip()
+                    if 'jetson' in model.lower() or 'orin' in model.lower():
+                        platform_info = " (Jetson)"
+                        print("  Jetson-specific:")
+                        print("    1. Verify I2C is enabled: ls /dev/i2c-*")
+                        print("    2. Check sensor on I2C Bus 1: sudo i2cdetect -y 1")
+                        print("    3. Ensure BLINKA_FORCEBOARD=JETSON_NX is set")
+                        print("    4. Verify I2C speed is 400kHz for MLX90640")
+                    elif 'raspberry' in model.lower():
+                        platform_info = " (Raspberry Pi)"
+                        print("  Raspberry Pi-specific:")
+                        print("    1. Check I2C is enabled: sudo raspi-config → Interface Options → I2C")
+                        print("    2. Verify I2C address: sudo i2cdetect -y 1")
+            print("  General:")
+            print("    1. Verify wiring connections")
+            print("    2. Check sensor is powered (3.3V)")
+            print("    3. For SSH: Enable X11 forwarding with -X flag")
+            print("    4. For Jetson: Ensure DISPLAY is set or use VNC")
             return False
     
     def update_frame(self, frame):

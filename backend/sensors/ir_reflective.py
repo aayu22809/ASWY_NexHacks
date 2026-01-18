@@ -1,8 +1,11 @@
 """
-Analog IR Reflective Sensor for Wound Hydration Analysis
+IR Reflective Sensor for Wound Hydration Analysis (Digital GPIO Mode)
 
 Provides continuous moisture detection, drying trend analysis, and surface roughness
 metrics for AI-driven CAP (Cold Atmospheric Plasma) treatment decisions.
+
+On Jetson Orin Nano: Uses GPIO digital mode (no native ADC available)
+On Raspberry Pi: Can use GPIO digital mode or ADC (if available)
 """
 
 import os
@@ -14,6 +17,28 @@ from datetime import datetime
 from typing import Optional, Dict, List, Tuple
 import numpy as np
 from scipy import stats
+
+# Try to import GPIO libraries
+try:
+    import Jetson.GPIO as JetsonGPIO
+    _HAVE_JETSON_GPIO = True
+except ImportError:
+    JetsonGPIO = None
+    _HAVE_JETSON_GPIO = False
+
+try:
+    import RPi.GPIO as RPiGPIO
+    _HAVE_RPI_GPIO = True
+except ImportError:
+    RPiGPIO = None
+    _HAVE_RPI_GPIO = False
+
+try:
+    import lgpio
+    _HAVE_LGPIO = True
+except ImportError:
+    lgpio = None
+    _HAVE_LGPIO = False
 
 # Try to import matplotlib for visualization (optional)
 try:
@@ -27,43 +52,53 @@ except ImportError:
 
 class IRReflectiveSensor:
     """
-    Analog IR reflective sensor driver with signal processing and analytics.
+    IR reflective sensor driver with signal processing and analytics (Digital GPIO Mode).
     
-    Reads analog values from Jetson ADC, processes signal with EMA smoothing,
+    Reads digital values from GPIO pin, processes signal with EMA smoothing,
     computes moisture index, drying trends, and roughness metrics.
+    
+    On Jetson Orin Nano: Uses GPIO digital mode (no native ADC)
+    Digital output: LOW = wet/detected, HIGH = dry/clear
     """
     
     def __init__(
         self,
-        adc_channel: int = 0,
+        gpio_pin: Optional[int] = None,
         baseline_distance_mm: float = 10.0,
         ema_alpha: float = 0.3,
         sampling_rate_hz: float = 20.0,
-        adc_resolution_bits: int = 12,
-        adc_max_voltage: float = 3.3,
         use_mock: bool = False
     ):
         """
         Initialize IR reflective sensor.
         
         Args:
-            adc_channel: ADC channel number (0-7 for Jetson)
+            gpio_pin: GPIO pin number (BCM numbering). Defaults to config value.
             baseline_distance_mm: Reference distance for calibration (mm)
             ema_alpha: EMA smoothing factor (0-1, higher = less smoothing)
             sampling_rate_hz: Target sampling rate (10-30 Hz)
-            adc_resolution_bits: ADC resolution (12-bit = 4096 levels)
-            adc_max_voltage: Maximum ADC voltage (typically 3.3V)
-            use_mock: Use mock data instead of real ADC (for testing)
+            use_mock: Use mock data instead of real GPIO (for testing)
         """
-        self.adc_channel = adc_channel
+        from backend.config import IR_REFLECTIVE_GPIO_PIN
+        
+        self.gpio_pin = gpio_pin if gpio_pin is not None else IR_REFLECTIVE_GPIO_PIN
         self.baseline_distance_mm = baseline_distance_mm
         self.ema_alpha = ema_alpha
         self.sampling_rate_hz = sampling_rate_hz
         self.sample_interval = 1.0 / sampling_rate_hz
-        self.adc_resolution_bits = adc_resolution_bits
-        self.adc_max_value = (1 << adc_resolution_bits) - 1  # 4095 for 12-bit
-        self.adc_max_voltage = adc_max_voltage
         self.use_mock = use_mock
+        
+        # Digital mode: 0 = LOW (wet/detected), 1 = HIGH (dry/clear)
+        # For compatibility with analog metrics, we'll map:
+        # LOW (0) → high moisture (MI = 1.0)
+        # HIGH (1) → low moisture (MI = 0.0)
+        self.digital_max_value = 1  # Binary: 0 or 1
+        
+        # GPIO state
+        self._gpio_lib = None
+        self._chip = None  # For lgpio
+        self._gpiochip_num = None  # For lgpio
+        self._initialized = False
         
         # Signal processing state
         self.ema_value = None
@@ -115,84 +150,120 @@ class IRReflectiveSensor:
             'drying_rate': deque(maxlen=int(sampling_rate_hz * 30)),
         }
         
-        # ADC initialization
+        # GPIO initialization
         if not use_mock:
-            self._init_adc()
+            self._init_gpio()
         else:
             self._mock_time = time.time()
-            print("[INFO] Using mock ADC data for testing")
+            print("[INFO] Using mock GPIO data for testing")
     
-    def _init_adc(self):
-        """Initialize Jetson ADC interface."""
-        # Jetson ADC typically accessed via IIO (Industrial I/O) subsystem
-        # Path: /sys/bus/iio/devices/iio:device0/in_voltage{channel}_raw
-        self.adc_path = f"/sys/bus/iio/devices/iio:device0/in_voltage{self.adc_channel}_raw"
+    def _init_gpio(self):
+        """Initialize GPIO interface for digital reading."""
+        # Try Jetson.GPIO first (for Jetson Orin Nano)
+        if _HAVE_JETSON_GPIO:
+            try:
+                JetsonGPIO.setmode(JetsonGPIO.BCM)
+                JetsonGPIO.setup(self.gpio_pin, JetsonGPIO.IN, pull_up_down=JetsonGPIO.PUD_UP)
+                self._gpio_lib = "Jetson"
+                self._initialized = True
+                print(f"[OK] IR Reflective sensor initialized on GPIO {self.gpio_pin} (Jetson.GPIO)")
+                return
+            except Exception as e:
+                print(f"[WARN] Jetson.GPIO initialization failed: {e}, trying fallback...")
         
-        if not os.path.exists(self.adc_path):
-            # Try alternative path
-            alt_path = f"/sys/bus/iio/devices/iio:device0/in_voltage{self.adc_channel}"
-            if os.path.exists(alt_path):
-                self.adc_path = alt_path
-            else:
-                print(f"[WARN] ADC path not found: {self.adc_path}")
-                print("[INFO] Falling back to mock mode")
-                self.use_mock = True
+        # Try RPi.GPIO (for Raspberry Pi)
+        if _HAVE_RPI_GPIO:
+            try:
+                RPiGPIO.setmode(RPiGPIO.BCM)
+                RPiGPIO.setup(self.gpio_pin, RPiGPIO.IN, pull_up_down=RPiGPIO.PUD_UP)
+                self._gpio_lib = "RPi"
+                self._initialized = True
+                print(f"[OK] IR Reflective sensor initialized on GPIO {self.gpio_pin} (RPi.GPIO)")
+                return
+            except Exception as e:
+                print(f"[WARN] RPi.GPIO initialization failed: {e}, trying fallback...")
+        
+        # Try lgpio (for Raspberry Pi 5)
+        if _HAVE_LGPIO:
+            try:
+                # Detect gpiochip
+                gpiochip_path = "/dev/gpiochip4" if os.path.exists("/dev/gpiochip4") else "/dev/gpiochip0"
+                self._gpiochip_num = 4 if "gpiochip4" in gpiochip_path else 0
+                self._chip = lgpio.gpiochip_open(self._gpiochip_num)
+                lgpio.gpio_claim_input(self._chip, self.gpio_pin, lgpio.SET_PULL_UP)
+                self._gpio_lib = "lgpio"
+                self._initialized = True
+                print(f"[OK] IR Reflective sensor initialized on GPIO {self.gpio_pin} (lgpio, chip={gpiochip_path})")
+                return
+            except Exception as e:
+                print(f"[WARN] lgpio initialization failed: {e}")
+        
+        # If all GPIO libraries failed, fall back to mock mode
+        print("[WARN] No GPIO library available or all failed. Falling back to mock mode.")
+        self.use_mock = True
+        self._mock_time = time.time()
     
     def read_raw(self) -> int:
         """
-        Read raw ADC value.
+        Read raw digital GPIO value.
         
         Returns:
-            Raw ADC value (0 to adc_max_value)
+            Digital value: 0 (LOW/wet) or 1 (HIGH/dry)
         """
         if self.use_mock:
-            # Generate mock data: sine wave with noise
+            # Generate mock data: simulate wet/dry transitions
             t = time.time() - self._mock_time
-            base = 2048 + 1000 * np.sin(2 * np.pi * 0.1 * t)  # Slow sine wave
-            noise = np.random.normal(0, 50)  # Gaussian noise
-            value = int(np.clip(base + noise, 0, self.adc_max_value))
+            # Simulate periodic wet/dry cycles
+            cycle = np.sin(2 * np.pi * 0.05 * t)  # Slow cycle
+            value = 0 if cycle > 0 else 1  # 0 = wet, 1 = dry
             return value
         
+        if not self._initialized:
+            return self.last_raw_value
+        
         try:
-            with open(self.adc_path, 'r') as f:
-                value = int(f.read().strip())
-            return value
-        except (IOError, ValueError, FileNotFoundError) as e:
-            print(f"[WARN] ADC read failed: {e}, using last known value")
+            if self._gpio_lib == "Jetson":
+                pin_state = JetsonGPIO.input(self.gpio_pin)
+                # LOW = wet/detected (0), HIGH = dry/clear (1)
+                return 0 if pin_state == JetsonGPIO.LOW else 1
+            elif self._gpio_lib == "RPi":
+                pin_state = RPiGPIO.input(self.gpio_pin)
+                return 0 if pin_state == RPiGPIO.LOW else 1
+            elif self._gpio_lib == "lgpio":
+                pin_state = lgpio.gpio_read(self._chip, self.gpio_pin)
+                return 0 if pin_state == 0 else 1
+            else:
+                return self.last_raw_value
+        except Exception as e:
+            print(f"[WARN] GPIO read failed: {e}, using last known value")
             return self.last_raw_value
     
     def normalize(self, raw_value: int) -> float:
         """
-        Normalize raw ADC value to 0-1 range.
+        Normalize raw digital value to 0-1 range.
         
         Args:
-            raw_value: Raw ADC reading
+            raw_value: Raw digital reading (0 = LOW/wet, 1 = HIGH/dry)
             
         Returns:
             Normalized value (0.0 to 1.0)
+            For digital mode: 0.0 = dry, 1.0 = wet (inverted from raw)
         """
-        # Apply calibration range if available
-        if self.baseline_dry is not None and self.baseline_wet is not None:
-            # Normalize based on dry/wet baselines
-            range_size = abs(self.baseline_wet - self.baseline_dry)
-            if range_size > 0:
-                normalized = (raw_value - self.baseline_dry) / range_size
-                return np.clip(normalized, 0.0, 1.0)
-        
-        # Default normalization: 0-1 based on ADC range
-        return raw_value / self.adc_max_value
+        # Digital mode: invert so LOW (wet) = 1.0, HIGH (dry) = 0.0
+        # This maintains compatibility with analog moisture index calculations
+        return 1.0 - float(raw_value)
     
     def get_voltage(self, raw_value: int) -> float:
         """
-        Convert raw ADC value to voltage.
+        Convert raw digital value to voltage (for compatibility).
         
         Args:
-            raw_value: Raw ADC reading
+            raw_value: Raw digital reading (0 or 1)
             
         Returns:
-            Voltage in volts (0.0 to adc_max_voltage)
+            Voltage in volts: 0.0V (LOW) or 3.3V (HIGH)
         """
-        return (raw_value / self.adc_max_value) * self.adc_max_voltage
+        return 0.0 if raw_value == 0 else 3.3
     
     def apply_ema(self, value: float, alpha: Optional[float] = None) -> float:
         """
@@ -217,7 +288,7 @@ class IRReflectiveSensor:
     
     def calibrate_baseline(self, distance_mm: float, dry_sample: bool = True):
         """
-        Calibrate baseline for dry or wet sample.
+        Calibrate baseline for dry or wet sample (digital mode).
         
         Args:
             distance_mm: Sensor distance from surface (mm)
@@ -237,16 +308,13 @@ class IRReflectiveSensor:
         
         if dry_sample:
             self.baseline_dry = baseline
-            print(f"[OK] Dry baseline: {baseline:.1f} ± {std:.1f}")
+            print(f"[OK] Dry baseline: {baseline:.2f} ± {std:.2f} (digital: HIGH=1, LOW=0)")
         else:
             self.baseline_wet = baseline
-            print(f"[OK] Wet baseline: {baseline:.1f} ± {std:.1f}")
+            print(f"[OK] Wet baseline: {baseline:.2f} ± {std:.2f} (digital: HIGH=1, LOW=0)")
         
-        # Update normalization range
-        if self.baseline_dry is not None and self.baseline_wet is not None:
-            self.normalization_min = min(self.baseline_dry, self.baseline_wet)
-            self.normalization_max = max(self.baseline_dry, self.baseline_wet)
-            print(f"[OK] Normalization range: {self.normalization_min:.1f} - {self.normalization_max:.1f}")
+        # For digital mode, baselines should be close to 0 (wet) or 1 (dry)
+        print(f"[INFO] Digital mode: LOW (0) = wet/detected, HIGH (1) = dry/clear")
     
     def compute_moisture_index(self, normalized_value: float) -> float:
         """
@@ -348,27 +416,21 @@ class IRReflectiveSensor:
     
     def detect_sensor_failure(self, raw_value: int) -> Tuple[bool, Optional[str]]:
         """
-        Detect sensor disconnection (constant zero or saturation).
+        Detect sensor disconnection (constant LOW or HIGH).
         
         Args:
-            raw_value: Current raw ADC reading
+            raw_value: Current raw digital reading (0 or 1)
             
         Returns:
             (is_failure, reason_string)
         """
-        if raw_value == 0:
-            self.zero_count += 1
-            self.saturation_count = 0
-            if self.zero_count > int(2.0 * self.sampling_rate_hz):  # >2 seconds of zeros
-                return True, "Sensor disconnected (constant zero)"
-        elif raw_value >= self.adc_max_value - 1:
-            self.saturation_count += 1
-            self.zero_count = 0
-            if self.saturation_count > int(2.0 * self.sampling_rate_hz):  # >2 seconds saturated
-                return True, "Sensor saturated (possible short circuit)"
-        else:
-            self.zero_count = 0
-            self.saturation_count = 0
+        # For digital mode, check if value is stuck (no transitions)
+        # This is simpler than analog mode - just check for lack of variation
+        if len(self.raw_history) > int(2.0 * self.sampling_rate_hz):
+            recent_values = list(self.raw_history)[-int(2.0 * self.sampling_rate_hz):]
+            if len(set(recent_values)) == 1:  # All same value
+                stuck_value = recent_values[0]
+                return True, f"Sensor stuck at {'LOW (wet)' if stuck_value == 0 else 'HIGH (dry)'} - possible disconnection"
         
         return False, None
     
@@ -687,3 +749,16 @@ class IRReflectiveSensor:
         
         if self.fig:
             plt.close(self.fig)
+        
+        # Cleanup GPIO
+        if self._initialized:
+            try:
+                if self._gpio_lib == "Jetson" and JetsonGPIO:
+                    JetsonGPIO.cleanup(self.gpio_pin)
+                elif self._gpio_lib == "RPi" and RPiGPIO:
+                    RPiGPIO.cleanup(self.gpio_pin)
+                elif self._gpio_lib == "lgpio" and self._chip:
+                    lgpio.gpiochip_close(self._chip)
+                self._initialized = False
+            except Exception as e:
+                print(f"[WARN] Error during GPIO cleanup: {e}")

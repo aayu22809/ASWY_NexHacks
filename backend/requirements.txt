@@ -10,12 +10,16 @@ adafruit-circuitpython-mlx90640
 adafruit-blinka
 
 # GPIO (choose one based on platform)
-# For Jetson Orin Nano (uncomment if using Jetson):
-# Jetson.GPIO
+# For Jetson Orin Nano (recommended for Jetson):
+Jetson.GPIO
 # For Raspberry Pi 5 (recommended - works on all Pi models):
 rpi-lgpio
 # For Raspberry Pi 4 and earlier (fallback, not needed if using rpi-lgpio):
 # RPi.GPIO
+
+# Note: For Jetson, set environment variable before running:
+# export BLINKA_FORCEBOARD=JETSON_NX
+# This helps adafruit-blinka detect Jetson hardware correctly
 
 # RealSense camera
 pyrealsense2>=2.56.5

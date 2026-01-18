@@ -1,25 +1,68 @@
-# Intel RealSense L515 Point Cloud Capture - Python Dependencies
-# 
-# Python Support:
-#   - Python 3.12: RECOMMENDED (both pyrealsense2 and Open3D have full support)
-#   - Python 3.10-3.11: Also supported
-#   - Python 3.13: pyrealsense2 works, but Open3D doesn't have wheels yet
-#
-# Note: Use Python 3.12 for best compatibility with all dependencies
+# Unified Python Dependencies for Cold Plasma Treatment System
+# This file consolidates all dependencies needed across the entire project:
+# - demo_server.py (unified web interface)
+# - backend/ (FastAPI server, sensors, executors)
+# - gcodegen/ (toolpath generation, visualizers)
+# - tests/ (test scripts, HTTP servers)
 
-# Core dependencies for live_arm_pointcloud.py
-pyrealsense2
-numpy
-open3d
+# ============================================================================
+# Web Framework & Server
+# ============================================================================
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+websockets>=12.0
+python-multipart>=0.0.6  # For file uploads in FastAPI
 
-# Dependencies for main.py (toolpath generation)
+# Legacy Flask support (for test_mlx90640_http.py)
+flask>=2.3.0
+flask-cors>=4.0.0
+
+# ============================================================================
+# Scientific Computing & Data Processing
+# ============================================================================
+numpy>=1.21.0
 scipy>=1.9.0
+pandas>=1.5.0  # For data analysis if needed
 
-# Dependencies for interactivevisualizer.py
-matplotlib>=3.5.0
+# ============================================================================
+# 3D Processing & Visualization
+# ============================================================================
+open3d>=0.17.0
+matplotlib>=3.5.0  # For visualizers and IR sensor visualization
 
-# Optional: Thermal sensor support (for software/thermal_predictor.py)
-# Uncomment if using MLX90614 IR temperature sensor:
-# adafruit-circuitpython-mlx90614
-# adafruit-blinka
+# ============================================================================
+# Data Validation & Serialization
+# ============================================================================
+pydantic>=2.0.0
 
+# ============================================================================
+# Hardware/Sensor Dependencies
+# ============================================================================
+# Thermal camera (MLX90640)
+adafruit-circuitpython-mlx90640
+adafruit-blinka
+
+# GPIO libraries (platform-specific, install based on your hardware)
+# For Jetson Orin Nano:
+# Jetson.GPIO
+# For Raspberry Pi 5 (recommended - works on all Pi models):
+# rpi-lgpio
+# For Raspberry Pi 4 and earlier (fallback):
+# RPi.GPIO
+
+# RealSense camera (optional - only if using RealSense)
+# pyrealsense2>=2.56.5
+
+# ============================================================================
+# Networking & HTTP
+# ============================================================================
+requests>=2.28.0
+aiohttp>=3.8.0  # For async HTTP if needed
+
+# ============================================================================
+# Additional Utilities
+# ============================================================================
+# Note: tkinter is usually included with Python, but ensure your system has it
+# For gevent/WebSocket support in Flask tests (optional):
+# gevent>=23.0.0
+# gevent-websocket>=0.10.1

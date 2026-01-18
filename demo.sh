@@ -27,17 +27,22 @@ echo -e "${GREEN}✓ Python3 found.${NC}"
 # 2. Setup Python Environment
 echo -e "\n${BLUE}[2/3] Setting up Python Environment...${NC}"
 if [ ! -d "venv" ]; then
-    echo "Creating virtual environment..."
-    python3 -m venv venv
+    echo "Running unified environment setup..."
+    ./setup_venv.sh
+else
+    # Verify venv is set up correctly
+    source venv/bin/activate
+    if ! python3 -c "import fastapi, numpy, open3d" 2>/dev/null; then
+        echo -e "${YELLOW}Virtual environment incomplete. Re-running setup...${NC}"
+        ./setup_venv.sh
+    else
+        source venv/bin/activate
+        echo -e "${GREEN}✓ Virtual environment ready${NC}"
+    fi
 fi
 
+# Ensure venv is activated
 source venv/bin/activate
-echo "Installing dependencies (this may take a moment)..."
-pip install -q fastapi uvicorn open3d numpy scipy 2>/dev/null || {
-    echo -e "${YELLOW}Installing from requirements.txt...${NC}"
-    pip install -q -r backend/requirements.txt 2>/dev/null
-}
-echo -e "${GREEN}✓ Dependencies installed.${NC}"
 
 # 3. Start Unified Server
 echo -e "\n${BLUE}[3/3] Starting Unified Demo Server...${NC}"

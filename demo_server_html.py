@@ -522,6 +522,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         let boundingBoxHandles = [];
         let isDragging = false;
         let dragHandle = null;
+        let raycaster = new THREE.Raycaster();
+        let mouse = new THREE.Vector2();
+        let dragPlane = null;
+        let dragOffset = null;
         
         // Thermal state
         let thermalWs = null;
@@ -787,24 +791,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     side: THREE.DoubleSide
                 });
                 
-                // Create mesh
+                // Create mesh (model is already normalized and centered by backend)
                 modelMesh = new THREE.Mesh(geometry, material);
                 scene.add(modelMesh);
                 
-                // Center and scale
+                // Model is already centered at origin, just position camera
                 geometry.computeBoundingBox();
                 const box = geometry.boundingBox;
-                const center = box.getCenter(new THREE.Vector3());
                 const size = box.getSize(new THREE.Vector3());
                 const maxDim = Math.max(size.x, size.y, size.z);
                 
                 if (maxDim > 0) {
-                    const scale = 200 / maxDim;
-                    modelMesh.scale.set(scale, scale, scale);
-                    modelMesh.position.sub(center.multiplyScalar(scale));
-                    
-                    // Update camera
-                    camera.position.set(maxDim * 1.5, maxDim * 1.5, maxDim * 1.5);
+                    // Position camera to view the model (already centered at origin)
+                    const cameraDistance = maxDim * 2.5;
+                    camera.position.set(cameraDistance, cameraDistance, cameraDistance);
                     controls.target.set(0, 0, 0);
                     controls.update();
                 }
@@ -893,12 +893,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         }
         
         function createBoundingBox(bounds) {
-            // Remove old bounding box
+            // Remove old bounding box and event listeners
             if (boundingBox) {
                 scene.remove(boundingBox);
                 boundingBoxHandles.forEach(h => scene.remove(h));
                 boundingBoxHandles = [];
             }
+            
+            // Remove old event listeners
+            renderer.domElement.removeEventListener('mousedown', handleMouseDown);
+            renderer.domElement.removeEventListener('mousemove', handleMouseMove);
+            renderer.domElement.removeEventListener('mouseup', handleMouseUp);
             
             const width = bounds.x_max - bounds.x_min;
             const height = bounds.y_max - bounds.y_min;
@@ -915,144 +920,164 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             // Create wireframe box
             const boxGeometry = new THREE.BoxGeometry(width, height, depth);
             const edges = new THREE.EdgesGeometry(boxGeometry);
-            const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 2 }));
+            const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0xffff00, linewidth: 2 }));
             line.position.copy(center);
             boundingBox = line;
             scene.add(boundingBox);
             
-            // Create draggable handles at corners
-            const handleGeometry = new THREE.SphereGeometry(5, 16, 16);
+            // Create just 2 draggable handles (min and max corners) - simpler and more intuitive
+            const handleGeometry = new THREE.SphereGeometry(8, 16, 16);
             const handleMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
             
-            const corners = [
-                { pos: [bounds.x_min, bounds.y_min, bounds.z_min], handle: 'min' },
-                { pos: [bounds.x_max, bounds.y_min, bounds.z_min], handle: 'x_max' },
-                { pos: [bounds.x_min, bounds.y_max, bounds.z_min], handle: 'y_max' },
-                { pos: [bounds.x_min, bounds.y_min, bounds.z_max], handle: 'z_max' },
-                { pos: [bounds.x_max, bounds.y_max, bounds.z_min], handle: 'x_max_y_max' },
-                { pos: [bounds.x_max, bounds.y_min, bounds.z_max], handle: 'x_max_z_max' },
-                { pos: [bounds.x_min, bounds.y_max, bounds.z_max], handle: 'y_max_z_max' },
-                { pos: [bounds.x_max, bounds.y_max, bounds.z_max], handle: 'max' }
-            ];
+            // Min corner handle
+            const minHandle = new THREE.Mesh(handleGeometry, handleMaterial);
+            minHandle.position.set(bounds.x_min, bounds.y_min, bounds.z_min);
+            minHandle.userData.isMin = true;
+            scene.add(minHandle);
+            boundingBoxHandles.push(minHandle);
             
-            corners.forEach(corner => {
-                const handle = new THREE.Mesh(handleGeometry, handleMaterial);
-                handle.position.set(...corner.pos);
-                handle.userData.handleType = corner.handle;
-                handle.userData.originalBounds = { ...bounds };
-                scene.add(handle);
-                boundingBoxHandles.push(handle);
-            });
+            // Max corner handle
+            const maxHandle = new THREE.Mesh(handleGeometry, handleMaterial);
+            maxHandle.position.set(bounds.x_max, bounds.y_max, bounds.z_max);
+            maxHandle.userData.isMin = false;
+            scene.add(maxHandle);
+            boundingBoxHandles.push(maxHandle);
             
-            // Setup raycaster for handle interaction
-            const raycaster = new THREE.Raycaster();
-            const mouse = new THREE.Vector2();
+            // Add event listeners
+            renderer.domElement.addEventListener('mousedown', handleMouseDown);
+            renderer.domElement.addEventListener('mousemove', handleMouseMove);
+            renderer.domElement.addEventListener('mouseup', handleMouseUp);
+        }
+        
+        function handleMouseDown(event) {
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
             
-            function onMouseDown(event) {
-                const rect = renderer.domElement.getBoundingClientRect();
-                mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-                mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-                
-                raycaster.setFromCamera(mouse, camera);
-                const intersects = raycaster.intersectObjects(boundingBoxHandles);
-                
-                if (intersects.length > 0) {
-                    isDragging = true;
-                    dragHandle = intersects[0].object;
-                    controls.enabled = false;
-                }
-            }
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(boundingBoxHandles);
             
-            function onMouseMove(event) {
-                if (!isDragging || !dragHandle) return;
+            if (intersects.length > 0) {
+                isDragging = true;
+                dragHandle = intersects[0].object;
+                controls.enabled = false;
                 
-                const rect = renderer.domElement.getBoundingClientRect();
-                mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-                mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+                // Create a plane perpendicular to camera for dragging
+                const cameraDirection = new THREE.Vector3();
+                camera.getWorldDirection(cameraDirection);
+                dragPlane = new THREE.Plane();
+                dragPlane.setFromNormalAndCoplanarPoint(cameraDirection, dragHandle.position);
                 
-                raycaster.setFromCamera(mouse, camera);
-                
-                // Get intersection with a plane at the handle's Y position
-                const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -dragHandle.position.y);
+                // Calculate offset from handle to intersection point
                 const intersection = new THREE.Vector3();
-                raycaster.ray.intersectPlane(plane, intersection);
+                raycaster.ray.intersectPlane(dragPlane, intersection);
+                dragOffset = new THREE.Vector3().subVectors(dragHandle.position, intersection);
+            }
+        }
+        
+        function handleMouseMove(event) {
+            if (!isDragging || !dragHandle || !dragPlane) return;
+            
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            
+            raycaster.setFromCamera(mouse, camera);
+            
+            // Get intersection with drag plane
+            const intersection = new THREE.Vector3();
+            if (raycaster.ray.intersectPlane(dragPlane, intersection)) {
+                // Apply offset
+                intersection.add(dragOffset);
                 
                 // Update handle position
                 dragHandle.position.copy(intersection);
                 
-                // Update bounds based on handle type
+                // Update bounds
                 updateBoundsFromHandles();
             }
+        }
+        
+        function handleMouseUp() {
+            if (isDragging) {
+                isDragging = false;
+                dragHandle = null;
+                dragPlane = null;
+                dragOffset = null;
+                controls.enabled = true;
+            }
+        }
+        
+        function updateBoundsFromHandles() {
+            if (boundingBoxHandles.length !== 2) return;
             
-            function onMouseUp() {
-                if (isDragging) {
-                    isDragging = false;
-                    dragHandle = null;
-                    controls.enabled = true;
+            const minHandle = boundingBoxHandles.find(h => h.userData.isMin);
+            const maxHandle = boundingBoxHandles.find(h => !h.userData.isMin);
+            
+            if (!minHandle || !maxHandle) return;
+            
+            const minPos = minHandle.position;
+            const maxPos = maxHandle.position;
+            
+            // Ensure min < max
+            const xMin = Math.min(minPos.x, maxPos.x);
+            const xMax = Math.max(minPos.x, maxPos.x);
+            const yMin = Math.min(minPos.y, maxPos.y);
+            const yMax = Math.max(minPos.y, maxPos.y);
+            const zMin = Math.min(minPos.z, maxPos.z);
+            const zMax = Math.max(minPos.z, maxPos.z);
+            
+            // Ensure minimum size
+            const minSize = 5;
+            if (xMax - xMin < minSize) {
+                const centerX = (xMin + xMax) / 2;
+                if (minHandle.userData.isMin) {
+                    minHandle.position.x = centerX - minSize / 2;
+                    maxHandle.position.x = centerX + minSize / 2;
+                } else {
+                    maxHandle.position.x = centerX + minSize / 2;
+                    minHandle.position.x = centerX - minSize / 2;
+                }
+            }
+            if (zMax - zMin < minSize) {
+                const centerZ = (zMin + zMax) / 2;
+                if (minHandle.userData.isMin) {
+                    minHandle.position.z = centerZ - minSize / 2;
+                    maxHandle.position.z = centerZ + minSize / 2;
+                } else {
+                    maxHandle.position.z = centerZ + minSize / 2;
+                    minHandle.position.z = centerZ - minSize / 2;
                 }
             }
             
-            function updateBoundsFromHandles() {
-                // Find min/max from all handles
-                let xMin = Infinity, xMax = -Infinity;
-                let yMin = Infinity, yMax = -Infinity;
-                let zMin = Infinity, zMax = -Infinity;
-                
-                boundingBoxHandles.forEach(handle => {
-                    const pos = handle.position;
-                    xMin = Math.min(xMin, pos.x);
-                    xMax = Math.max(xMax, pos.x);
-                    yMin = Math.min(yMin, pos.y);
-                    yMax = Math.max(yMax, pos.y);
-                    zMin = Math.min(zMin, pos.z);
-                    zMax = Math.max(zMax, pos.z);
-                });
-                
-                // Ensure minimum size
-                if (xMax - xMin < 10) {
-                    const centerX = (xMin + xMax) / 2;
-                    xMin = centerX - 5;
-                    xMax = centerX + 5;
-                }
-                if (zMax - zMin < 10) {
-                    const centerZ = (zMin + zMax) / 2;
-                    zMin = centerZ - 5;
-                    zMax = centerZ + 5;
-                }
-                
-                currentBounds = {
-                    x_min: xMin,
-                    x_max: xMax,
-                    y_min: yMin,
-                    y_max: yMax,
-                    z_min: zMin,
-                    z_max: zMax
-                };
-                
-                // Update box geometry
-                const width = xMax - xMin;
-                const height = yMax - yMin;
-                const depth = zMax - zMin;
-                const center = new THREE.Vector3(
-                    (xMin + xMax) / 2,
-                    (yMin + yMax) / 2,
-                    (zMin + zMax) / 2
-                );
-                
-                boundingBox.geometry.dispose();
-                const boxGeometry = new THREE.BoxGeometry(width, height, depth);
-                const edges = new THREE.EdgesGeometry(boxGeometry);
-                boundingBox.geometry = edges;
-                boundingBox.position.copy(center);
-                
-                // Update display
-                updateBoundsDisplay(currentBounds);
-            }
+            // Update current bounds
+            currentBounds = {
+                x_min: Math.min(minHandle.position.x, maxHandle.position.x),
+                x_max: Math.max(minHandle.position.x, maxHandle.position.x),
+                y_min: Math.min(minHandle.position.y, maxHandle.position.y),
+                y_max: Math.max(minHandle.position.y, maxHandle.position.y),
+                z_min: Math.min(minHandle.position.z, maxHandle.position.z),
+                z_max: Math.max(minHandle.position.z, maxHandle.position.z)
+            };
             
-            // Add event listeners
-            renderer.domElement.addEventListener('mousedown', onMouseDown);
-            renderer.domElement.addEventListener('mousemove', onMouseMove);
-            renderer.domElement.addEventListener('mouseup', onMouseUp);
+            // Update box geometry
+            const width = currentBounds.x_max - currentBounds.x_min;
+            const height = currentBounds.y_max - currentBounds.y_min;
+            const depth = currentBounds.z_max - currentBounds.z_min;
+            const center = new THREE.Vector3(
+                (currentBounds.x_min + currentBounds.x_max) / 2,
+                (currentBounds.y_min + currentBounds.y_max) / 2,
+                (currentBounds.z_min + currentBounds.z_max) / 2
+            );
+            
+            boundingBox.geometry.dispose();
+            const boxGeometry = new THREE.BoxGeometry(width, height, depth);
+            const edges = new THREE.EdgesGeometry(boxGeometry);
+            boundingBox.geometry = edges;
+            boundingBox.position.copy(center);
+            
+            // Update display
+            updateBoundsDisplay(currentBounds);
         }
         
         function updateBoundsDisplay(bounds) {
@@ -1162,45 +1187,86 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         function renderToolpath(toolpath) {
             // Remove old toolpath
             if (toolpathLines) {
-                scene.remove(toolpathLines);
-                toolpathLines.geometry.dispose();
-                toolpathLines.material.dispose();
+                if (Array.isArray(toolpathLines)) {
+                    toolpathLines.forEach(line => {
+                        scene.remove(line);
+                        if (line.geometry) line.geometry.dispose();
+                        if (line.material) line.material.dispose();
+                    });
+                } else {
+                    scene.remove(toolpathLines);
+                    if (toolpathLines.geometry) toolpathLines.geometry.dispose();
+                    if (toolpathLines.material) toolpathLines.material.dispose();
+                }
             }
             
-            // Separate treatment and rapid moves
-            const treatmentPoints = [];
-            const rapidPoints = [];
+            toolpathLines = [];
             
-            toolpath.forEach(pt => {
+            // Group points into continuous segments (raster lines)
+            // Rapid moves separate segments
+            let currentSegment = [];
+            
+            toolpath.forEach((pt, idx) => {
                 const pos = new THREE.Vector3(...pt.position);
+                
                 if (pt.is_rapid) {
-                    rapidPoints.push(pos);
+                    // End current segment if it has points
+                    if (currentSegment.length > 1) {
+                        const geometry = new THREE.BufferGeometry().setFromPoints(currentSegment);
+                        const material = new THREE.LineBasicMaterial({ 
+                            color: 0x00aaff, 
+                            linewidth: 3 
+                        });
+                        const line = new THREE.Line(geometry, material);
+                        scene.add(line);
+                        toolpathLines.push(line);
+                    }
+                    currentSegment = [];
                 } else {
-                    treatmentPoints.push(pos);
+                    // Add to current segment
+                    currentSegment.push(pos);
                 }
             });
             
-            // Create treatment path (blue)
-            if (treatmentPoints.length > 1) {
-                const treatmentGeometry = new THREE.BufferGeometry().setFromPoints(treatmentPoints);
-                const treatmentMaterial = new THREE.LineBasicMaterial({ color: 0x00aaff, linewidth: 2 });
-                const treatmentLine = new THREE.Line(treatmentGeometry, treatmentMaterial);
-                scene.add(treatmentLine);
-                toolpathLines = treatmentLine;
+            // Add final segment
+            if (currentSegment.length > 1) {
+                const geometry = new THREE.BufferGeometry().setFromPoints(currentSegment);
+                const material = new THREE.LineBasicMaterial({ 
+                    color: 0x00aaff, 
+                    linewidth: 3 
+                });
+                const line = new THREE.Line(geometry, material);
+                scene.add(line);
+                toolpathLines.push(line);
             }
             
-            // Create rapid moves (red dashed)
-            if (rapidPoints.length > 1) {
-                const rapidGeometry = new THREE.BufferGeometry().setFromPoints(rapidPoints);
-                const rapidMaterial = new THREE.LineDashedMaterial({ 
-                    color: 0xff0000, 
-                    dashSize: 5, 
-                    gapSize: 5 
-                });
-                const rapidLine = new THREE.Line(rapidGeometry, rapidMaterial);
-                rapidLine.computeLineDistances();
-                scene.add(rapidLine);
-            }
+            // Render rapid moves as dashed lines between segments
+            let rapidStart = null;
+            toolpath.forEach((pt, idx) => {
+                const pos = new THREE.Vector3(...pt.position);
+                
+                if (pt.is_rapid) {
+                    if (rapidStart === null) {
+                        rapidStart = pos;
+                    } else {
+                        // Draw rapid move line
+                        const rapidGeometry = new THREE.BufferGeometry().setFromPoints([rapidStart, pos]);
+                        const rapidMaterial = new THREE.LineDashedMaterial({ 
+                            color: 0xff6600, 
+                            dashSize: 3, 
+                            gapSize: 3,
+                            linewidth: 1
+                        });
+                        const rapidLine = new THREE.Line(rapidGeometry, rapidMaterial);
+                        rapidLine.computeLineDistances();
+                        scene.add(rapidLine);
+                        toolpathLines.push(rapidLine);
+                        rapidStart = null;
+                    }
+                } else {
+                    rapidStart = null;
+                }
+            });
         }
         
         async function exportGcode() {

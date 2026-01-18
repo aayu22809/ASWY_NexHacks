@@ -114,19 +114,57 @@ def save_uploaded_model(file_content: bytes, filename: str) -> Tuple[str, dict]:
     else:
         raise ValueError(f"Unsupported file format: {file_ext}. Only .ply and .obj are supported.")
     
-    # Load PLY to get metadata
+    # Load PLY to get metadata and normalize coordinates
     try:
-        pcd = o3d.io.read_point_cloud(str(ply_path))
-        if len(pcd.points) == 0:
-            # Try as mesh
-            mesh = o3d.io.read_triangle_mesh(str(ply_path))
-            if len(mesh.vertices) == 0:
+        # Try loading as mesh first (preserves structure)
+        mesh = o3d.io.read_triangle_mesh(str(ply_path))
+        
+        if len(mesh.vertices) > 0:
+            # Use mesh vertices
+            points = np.asarray(mesh.vertices)
+            
+            # Normalize: center at origin and scale to 150mm max dimension (like gcodegen)
+            center = points.mean(axis=0)
+            points = points - center
+            max_dim = np.abs(points).max()
+            
+            if max_dim > 0:
+                scale_factor = 150.0 / max_dim
+                points = points * scale_factor
+                
+                # Update mesh vertices with normalized coordinates
+                mesh.vertices = o3d.utility.Vector3dVector(points)
+                
+                # Recompute normals after transformation
+                mesh.compute_vertex_normals()
+                mesh.compute_triangle_normals()
+                
+                # Save normalized mesh back to PLY
+                o3d.io.write_triangle_mesh(str(ply_path), mesh)
+        else:
+            # Try as point cloud
+            pcd = o3d.io.read_point_cloud(str(ply_path))
+            if len(pcd.points) == 0:
                 raise ValueError("File contains no points or vertices")
-            pcd = mesh.sample_points_uniformly(number_of_points=2000)
+            
+            points = np.asarray(pcd.points)
+            
+            # Normalize: center at origin and scale to 150mm max dimension
+            center = points.mean(axis=0)
+            points = points - center
+            max_dim = np.abs(points).max()
+            
+            if max_dim > 0:
+                scale_factor = 150.0 / max_dim
+                points = points * scale_factor
+                
+                # Update point cloud with normalized coordinates
+                pcd.points = o3d.utility.Vector3dVector(points)
+                
+                # Save normalized point cloud back to PLY
+                o3d.io.write_point_cloud(str(ply_path), pcd)
         
-        points = np.asarray(pcd.points)
-        
-        # Calculate bounds
+        # Calculate bounds from normalized points
         min_bounds = points.min(axis=0).tolist()
         max_bounds = points.max(axis=0).tolist()
         

@@ -1,0 +1,29 @@
+# FastAPI Backend Dependencies
+
+# Web framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+websockets>=12.0
+
+# Sensor drivers
+adafruit-circuitpython-mlx90640
+adafruit-blinka
+
+# GPIO (choose one based on platform)
+# For Jetson Orin Nano:
+Jetson.GPIO
+# For Raspberry Pi (uncomment if using Pi):
+# RPi.GPIO
+
+# RealSense camera
+pyrealsense2>=2.56.5
+
+# Scientific computing
+numpy>=1.21.0
+scipy>=1.9.0
+
+# 3D processing
+open3d>=0.17.0
+
+# Pydantic for data validation
+pydantic>=2.0.0

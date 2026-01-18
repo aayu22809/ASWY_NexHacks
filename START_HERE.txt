@@ -1,0 +1,62 @@
+================================================================================
+START HERE - Get RealSense Camera Working
+================================================================================
+
+STEP 1: Run the comprehensive test
+------------------------------------
+python3 run_all_tests.py
+
+This will show you:
+- If pyrealsense2 is working
+- If camera is detected
+- What needs to be fixed
+
+STEP 2: If camera not detected
+------------------------------------
+The test will tell you what's missing. Common fixes:
+
+1. Connect camera to USB 3.0 port (blue connector)
+2. Install udev rules:
+   sudo cp /mnt/ssd/librealsense/config/99-realsense-libusb.rules /etc/udev/rules.d/
+   sudo udevadm control --reload-rules && sudo udevadm trigger
+
+3. Add user to plugdev group:
+   sudo usermod -aG plugdev $USER
+   # Then log out and log back in
+
+4. Unplug and replug camera
+
+5. Run test again:
+   python3 run_all_tests.py
+
+STEP 3: Once camera is detected
+------------------------------------
+python3 live_arm_pointcloud_jetson.py
+
+================================================================================
+ALL TEST SCRIPTS AVAILABLE:
+================================================================================
+
+1. run_all_tests.py          - Complete test (RECOMMENDED)
+2. debug_camera.py            - Detailed diagnostics
+3. simple_test.py             - Quick test
+4. comprehensive_test.py      - Full test suite
+5. test_realsense.py          - Basic test
+
+================================================================================
+QUICK REFERENCE:
+================================================================================
+
+# Test everything
+python3 run_all_tests.py
+
+# Debug issues
+python3 debug_camera.py
+
+# Quick test
+python3 simple_test.py
+
+# Run visualizer (once camera works)
+python3 live_arm_pointcloud_jetson.py
+
+================================================================================

@@ -10,10 +10,10 @@ adafruit-circuitpython-mlx90640
 adafruit-blinka
 
 # GPIO (choose one based on platform)
-# For Jetson Orin Nano:
-Jetson.GPIO
-# For Raspberry Pi (uncomment if using Pi):
-# RPi.GPIO
+# For Jetson Orin Nano (uncomment if using Jetson):
+# Jetson.GPIO
+# For Raspberry Pi:
+RPi.GPIO
 
 # RealSense camera
 pyrealsense2>=2.56.5

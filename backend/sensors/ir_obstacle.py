@@ -3,14 +3,14 @@
 from typing import Optional
 
 try:
-    # Try Jetson GPIO first (for Jetson Orin Nano)
-    import Jetson.GPIO as GPIO
-    _GPIO_LIB = "Jetson"
+    # Try RPi.GPIO first (for Raspberry Pi)
+    import RPi.GPIO as GPIO
+    _GPIO_LIB = "RPi"
 except ImportError:
     try:
-        # Fall back to RPi.GPIO (for Raspberry Pi)
-        import RPi.GPIO as GPIO
-        _GPIO_LIB = "RPi"
+        # Fall back to Jetson.GPIO (for Jetson Orin Nano)
+        import Jetson.GPIO as GPIO
+        _GPIO_LIB = "Jetson"
     except ImportError:
         GPIO = None
         _GPIO_LIB = None

@@ -69,9 +69,48 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         .main-container {
             display: grid;
             grid-template-columns: 1fr 400px 350px;
+            grid-template-rows: 1fr 1fr;
             gap: 1rem;
             padding: 1rem;
             height: calc(100vh - 80px);
+        }
+        
+        .viewer-section {
+            grid-column: 1;
+            grid-row: 1 / 3;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+        
+        .viz-image-container {
+            flex: 1;
+            background: #000;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            min-height: 300px;
+        }
+        
+        #toolpathViz {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        
+        .viz-controls {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+        
+        .viz-controls .btn {
+            flex: 1;
+            margin-bottom: 0;
+            padding: 0.5rem;
+            font-size: 0.75rem;
         }
         
         .panel {
@@ -396,10 +435,27 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
     
     <div class="main-container">
-        <!-- 3D Viewer Panel -->
-        <div class="panel">
-            <div class="panel-title">3D Model & Toolpath</div>
-            <div id="viewer-container"></div>
+        <!-- 3D Viewer Section (spans 2 rows) -->
+        <div class="viewer-section">
+            <!-- 3D Model Viewer Panel -->
+            <div class="panel">
+                <div class="panel-title">3D Model Viewer</div>
+                <div id="viewer-container"></div>
+            </div>
+            
+            <!-- Toolpath Visualizer Panel -->
+            <div class="panel">
+                <div class="panel-title">Toolpath Visualizer</div>
+                <div class="viz-image-container">
+                    <img id="toolpathViz" src="/api/visualizer/image?view=3d" alt="Toolpath Visualization">
+                </div>
+                <div class="viz-controls">
+                    <button class="btn btn-secondary" onclick="refreshViz('3d')">3D View</button>
+                    <button class="btn btn-secondary" onclick="refreshViz('top')">Top View</button>
+                    <button class="btn btn-secondary" onclick="refreshViz('side')">Side View</button>
+                    <button class="btn btn-secondary" onclick="refreshViz()">Refresh</button>
+                </div>
+            </div>
         </div>
         
         <!-- Thermal Panel -->
@@ -1174,6 +1230,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 document.getElementById('exportGcodeBtn').disabled = false;
                 document.getElementById('exportCsvBtn').disabled = false;
                 
+                // Refresh visualizer
+                refreshViz();
+                
                 addEvent(`Path generated: ${result.stats.num_points} points`, 'success');
             } catch (error) {
                 addEvent(`Generation failed: ${error.message}`, 'error');
@@ -1333,6 +1392,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             } catch (error) {
                 addEvent(`Export failed: ${error.message}`, 'error');
             }
+        }
+        
+        function refreshViz(view = '3d') {
+            const img = document.getElementById('toolpathViz');
+            // Add timestamp to force refresh
+            const timestamp = new Date().getTime();
+            img.src = `/api/visualizer/image?view=${view}&t=${timestamp}`;
         }
         
         function addEvent(message, type = 'info') {

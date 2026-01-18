@@ -37,15 +37,20 @@ log_debug('demo_server.py:20', 'Standard imports successful', {}, 'H1,H2')
 # endregion
 
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend for server
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 # region agent log
 log_debug('demo_server.py:23', 'About to import FastAPI', {}, 'H2')
 # endregion
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, Response
 from pydantic import BaseModel
+from io import BytesIO
 
 # region agent log
 log_debug('demo_server.py:30', 'FastAPI imported successfully', {}, 'H2')
@@ -299,6 +304,120 @@ async def load_demo_hand():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load demo hand: {str(e)}")
+
+
+@app.get("/api/visualizer/image")
+async def get_visualizer_image(view: str = Query("3d", regex="^(3d|top|side)$")):
+    """
+    Generate matplotlib visualization of toolpath from most recent gcodegen results.
+    
+    Args:
+        view: View angle - '3d', 'top', or 'side'
+    """
+    try:
+        # Find most recent results JSON file
+        gcodegen_dir = Path("gcodegen")
+        results_files = sorted(gcodegen_dir.glob("results_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        
+        if not results_files:
+            # Return placeholder image
+            fig, ax = plt.subplots(figsize=(8, 6))
+            ax.text(0.5, 0.5, 'No toolpath data available.\\nRun gcodegen to generate results.', 
+                   ha='center', va='center', fontsize=14, transform=ax.transAxes)
+            ax.axis('off')
+            
+            buf = BytesIO()
+            fig.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+            buf.seek(0)
+            plt.close(fig)
+            
+            return Response(content=buf.read(), media_type="image/png")
+        
+        # Load most recent results
+        from gcodegen.main import ResultsManager, ToolpathPoint, SurfaceModel
+        
+        results_data = ResultsManager.load_results(str(results_files[0]))
+        
+        # Reconstruct toolpath
+        toolpath = []
+        for pt_data in results_data['toolpath']:
+            toolpath.append(ToolpathPoint(
+                position=np.array(pt_data['position']),
+                normal=np.array(pt_data['normal']),
+                feed_rate=pt_data['feed_rate'],
+                is_rapid=pt_data['is_rapid']
+            ))
+        
+        # Reconstruct surface (use sample points)
+        surface_points = np.array(results_data['surface_sample'])
+        surface_name = results_data['metadata']['surface_name']
+        use_mesh_direct = "hand" in surface_name.lower() or "Hand" in surface_name
+        surface = SurfaceModel(surface_points, surface_name, use_mesh_direct=use_mesh_direct)
+        
+        # Create matplotlib figure
+        fig = plt.figure(figsize=(10, 8))
+        ax = fig.add_subplot(111, projection='3d')
+        
+        # Plot surface points
+        points = surface.points
+        ax.scatter(points[:, 0], points[:, 1], points[:, 2],
+                  c=points[:, 1], cmap='terrain', s=2, alpha=0.4, label='Surface')
+        
+        # Plot toolpath
+        if toolpath:
+            positions = np.array([pt.position for pt in toolpath])
+            is_rapid = np.array([pt.is_rapid for pt in toolpath])
+            
+            # Plot treatment path
+            if any(~is_rapid):
+                treatment_pos = positions[~is_rapid]
+                ax.plot(treatment_pos[:, 0], treatment_pos[:, 1], treatment_pos[:, 2],
+                       'b-', linewidth=2, alpha=0.8, label='Treatment Path')
+            
+            # Plot rapid moves
+            if any(is_rapid):
+                rapid_pos = positions[is_rapid]
+                ax.plot(rapid_pos[:, 0], rapid_pos[:, 1], rapid_pos[:, 2],
+                       'r--', linewidth=1, alpha=0.5, label='Rapid Moves')
+        
+        # Set labels and title
+        ax.set_xlabel('X (mm)')
+        ax.set_ylabel('Y (mm)')
+        ax.set_zlabel('Z (mm)')
+        title = f'{surface_name} - Toolpath Visualization'
+        ax.set_title(title, fontsize=12, fontweight='bold')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        # Set view angle
+        if view == 'top':
+            ax.view_init(elev=90, azim=-90)
+        elif view == 'side':
+            ax.view_init(elev=0, azim=-90)
+        else:  # 3d
+            ax.view_init(elev=30, azim=45)
+        
+        # Save to BytesIO
+        buf = BytesIO()
+        fig.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+        buf.seek(0)
+        plt.close(fig)
+        
+        return Response(content=buf.read(), media_type="image/png")
+        
+    except Exception as e:
+        # Return error image
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.text(0.5, 0.5, f'Error generating visualization:\\n{str(e)}', 
+               ha='center', va='center', fontsize=12, transform=ax.transAxes, color='red')
+        ax.axis('off')
+        
+        buf = BytesIO()
+        fig.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+        buf.seek(0)
+        plt.close(fig)
+        
+        return Response(content=buf.read(), media_type="image/png")
 
 
 class GenerateRequest(BaseModel):

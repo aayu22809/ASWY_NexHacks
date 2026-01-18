@@ -21,6 +21,7 @@ from backend.config import (
 )
 from backend.sensors.mlx90640 import MLX90640Sensor
 from backend.sensors.ir_obstacle import IRObstacleSensor
+from backend.sensors.ir_reflective import IRReflectiveSensor
 from backend.sensors.realsense import RealSenseCapture
 from backend.executor import ExecutionEngine
 
@@ -38,6 +39,7 @@ app.add_middleware(
 # Global sensor instances
 mlx_sensor: Optional[MLX90640Sensor] = None
 ir_sensor: Optional[IRObstacleSensor] = None
+ir_reflective_sensor: Optional[IRReflectiveSensor] = None
 executor: Optional[ExecutionEngine] = None
 
 # WebSocket connection manager
@@ -95,7 +97,7 @@ class StatusResponse(BaseModel):
 @app.on_event("startup")
 async def startup_event():
     """Initialize sensors on startup."""
-    global mlx_sensor, ir_sensor, executor
+    global mlx_sensor, ir_sensor, ir_reflective_sensor, executor
     
     try:
         mlx_sensor = MLX90640Sensor()
@@ -111,6 +113,35 @@ async def startup_event():
         print(f"[WARN] IR Obstacle sensor initialization failed: {e}")
         ir_sensor = None
     
+    try:
+        from backend.config import (
+            IR_REFLECTIVE_ADC_CHANNEL,
+            IR_REFLECTIVE_BASELINE_DISTANCE_MM,
+            IR_REFLECTIVE_EMA_ALPHA,
+            IR_REFLECTIVE_SAMPLING_RATE_HZ,
+            IR_REFLECTIVE_ADC_RESOLUTION_BITS,
+            IR_REFLECTIVE_ADC_MAX_VOLTAGE
+        )
+        ir_reflective_sensor = IRReflectiveSensor(
+            adc_channel=IR_REFLECTIVE_ADC_CHANNEL,
+            baseline_distance_mm=IR_REFLECTIVE_BASELINE_DISTANCE_MM,
+            ema_alpha=IR_REFLECTIVE_EMA_ALPHA,
+            sampling_rate_hz=IR_REFLECTIVE_SAMPLING_RATE_HZ,
+            adc_resolution_bits=IR_REFLECTIVE_ADC_RESOLUTION_BITS,
+            adc_max_voltage=IR_REFLECTIVE_ADC_MAX_VOLTAGE,
+            use_mock=False  # Use real hardware
+        )
+        print("[OK] IR Reflective sensor initialized")
+    except Exception as e:
+        print(f"[WARN] IR Reflective sensor initialization failed: {e}")
+        print("[INFO] Falling back to mock mode for testing")
+        try:
+            ir_reflective_sensor = IRReflectiveSensor(use_mock=True)
+            print("[OK] IR Reflective sensor initialized (mock mode)")
+        except Exception as mock_e:
+            print(f"[WARN] Mock mode also failed: {mock_e}")
+            ir_reflective_sensor = None
+    
     executor = ExecutionEngine()
     print("[OK] Execution engine initialized")
     
@@ -121,12 +152,14 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown."""
-    global mlx_sensor, ir_sensor, executor
+    global mlx_sensor, ir_sensor, ir_reflective_sensor, executor
     
     if mlx_sensor:
         mlx_sensor.close()
     if ir_sensor:
         ir_sensor.close()
+    if ir_reflective_sensor:
+        ir_reflective_sensor.close()
     if executor:
         executor.stop()
 
@@ -138,6 +171,7 @@ async def health():
         "status": "healthy",
         "mlx90640": mlx_sensor is not None,
         "ir_obstacle": ir_sensor is not None,
+        "ir_reflective": ir_reflective_sensor is not None,
         "executor": executor is not None,
     }
 
@@ -297,11 +331,20 @@ async def websocket_sensors(websocket: WebSocket):
                 except Exception:
                     pass
             
+            # Read IR reflective sensor metrics
+            ir_metrics = None
+            if ir_reflective_sensor:
+                try:
+                    ir_metrics = ir_reflective_sensor.get_ir_metrics()
+                except Exception:
+                    pass
+            
             # Send data
             await websocket.send_json({
                 "thermal": thermal_frame.tolist() if thermal_frame is not None else None,
                 "max_temp": float(max_temp) if max_temp is not None else None,
                 "obstacle": obstacle_detected,
+                "ir_metrics": ir_metrics,
                 "timestamp": datetime.now().isoformat(),
             })
             

@@ -2,7 +2,7 @@
 
 **NexHacks 2026 Submission**
 
-An autonomous robotic system for cold plasma wound therapy, featuring real-time 3D scanning, thermal safety monitoring, and AI-driven path planning.
+An autonomous robotic system for cold plasma wound therapy setup to be integrated with various industry standard robotic arms like ABB and KUKA, featuring real-time 3D scanning, thermal safety monitoring, and AI-driven path planning.
 
 ## 🚀 Instant Demo
 

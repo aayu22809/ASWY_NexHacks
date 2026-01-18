@@ -83,6 +83,16 @@ python3 -c "import numpy; print('✓ numpy')" 2>/dev/null || { echo -e "${RED}�
 python3 -c "import fastapi; print('✓ fastapi')" 2>/dev/null || { echo -e "${RED}✗ fastapi failed${NC}"; exit 1; }
 python3 -c "import open3d; print('✓ open3d')" 2>/dev/null || { echo -e "${RED}✗ open3d failed${NC}"; exit 1; }
 python3 -c "import scipy; print('✓ scipy')" 2>/dev/null || { echo -e "${RED}✗ scipy failed${NC}"; exit 1; }
+python3 -c "import matplotlib; print('✓ matplotlib')" 2>/dev/null || { echo -e "${RED}✗ matplotlib failed${NC}"; exit 1; }
+
+# Check for tkinter (needed for interactivevisualizer.py)
+echo -e "\n${BLUE}Checking for tkinter (needed for visualizer)...${NC}"
+python3 -c "import tkinter; print('✓ tkinter')" 2>/dev/null || { 
+    echo -e "${YELLOW}⚠ tkinter not found${NC}"
+    echo -e "${YELLOW}  On Ubuntu/Debian: sudo apt-get install python3-tk${NC}"
+    echo -e "${YELLOW}  On macOS: Usually included with Python${NC}"
+    echo -e "${YELLOW}  On Windows: Usually included with Python${NC}"
+}
 
 echo -e "\n${BLUE}=================================================${NC}"
 echo -e "${GREEN}Setup Complete!${NC}"

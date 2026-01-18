@@ -30,14 +30,21 @@ if [ ! -d "venv" ]; then
     echo "Running unified environment setup..."
     ./setup_venv.sh
 else
-    # Verify venv is set up correctly
+    # Verify venv is set up correctly (including gcodegen dependencies)
     source venv/bin/activate
-    if ! python3 -c "import fastapi, numpy, open3d" 2>/dev/null; then
+    if ! python3 -c "import fastapi, numpy, open3d, scipy, matplotlib" 2>/dev/null; then
         echo -e "${YELLOW}Virtual environment incomplete. Re-running setup...${NC}"
         ./setup_venv.sh
     else
         source venv/bin/activate
         echo -e "${GREEN}✓ Virtual environment ready${NC}"
+        
+        # Verify gcodegen can be imported
+        if ! python3 -c "import sys; sys.path.insert(0, 'gcodegen'); from main import ToolpathConfig" 2>/dev/null; then
+            echo -e "${YELLOW}⚠ Warning: gcodegen modules may not be accessible${NC}"
+        else
+            echo -e "${GREEN}✓ gcodegen modules accessible${NC}"
+        fi
     fi
 fi
 

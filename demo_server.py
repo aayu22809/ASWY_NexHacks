@@ -23,13 +23,13 @@ log_debug('demo_server.py:1', 'Script started', {}, 'H1,H2,H4')
 # endregion
 
 import asyncio
-import json
 import os
+import subprocess
+import sys
 import time
-import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional
 from threading import Lock
 
 # region agent log
@@ -54,8 +54,6 @@ log_debug('demo_server.py:31', 'About to import backend modules', {}, 'H1,H4')
 
 # Import backend modules
 from backend.model_storage import save_uploaded_model, get_model, cleanup_old_files
-from backend.path_generator import generate_toolpath
-import open3d as o3d
 
 # region agent log
 log_debug('demo_server.py:35', 'Backend modules imported successfully', {}, 'H1,H4')
@@ -105,7 +103,6 @@ app.add_middleware(
 # Global state
 mlx_sensor: Optional[MLX90640Sensor] = None
 sensor_lock = Lock()
-generation_results: Dict[str, dict] = {}  # Store generated toolpaths by ID
 
 # Thermal simulation state
 _thermal_sim_time = 0.0
@@ -191,7 +188,6 @@ class ConnectionManager:
                 pass
 
 thermal_manager = ConnectionManager()
-progress_manager = ConnectionManager()
 
 
 @app.on_event("startup")
@@ -301,136 +297,86 @@ async def load_demo_hand():
         raise HTTPException(status_code=500, detail=f"Failed to load demo hand: {str(e)}")
 
 
-class GenerateRequest(BaseModel):
-    model_id: str
-    bounds: dict
-    config: dict
+class RunGcodegenRequest(BaseModel):
+    config: Optional[dict] = None
 
 
-@app.post("/api/generate")
-async def generate_toolpath_endpoint(request: GenerateRequest):
-    """Generate toolpath for selected area of model."""
+@app.post("/api/run-gcodegen")
+async def run_gcodegen(request: RunGcodegenRequest):
+    """Run gcodegen/main.py via subprocess."""
     try:
-        # Get model file
-        model_path = get_model(request.model_id)
-        if not model_path or not model_path.exists():
-            raise HTTPException(status_code=404, detail="Model not found")
+        # Change to gcodegen directory
+        gcodegen_dir = Path(__file__).parent / "gcodegen"
+        if not gcodegen_dir.exists():
+            raise HTTPException(status_code=404, detail="gcodegen directory not found")
         
-        # Load point cloud
-        pcd = o3d.io.read_point_cloud(str(model_path))
-        if len(pcd.points) == 0:
-            mesh = o3d.io.read_triangle_mesh(str(model_path))
-            if len(mesh.vertices) == 0:
-                raise ValueError("Model file contains no points or vertices")
-            pcd = mesh.sample_points_uniformly(number_of_points=2000)
+        # Build command
+        python_cmd = sys.executable
+        main_script = gcodegen_dir / "main.py"
         
-        points = np.asarray(pcd.points)
+        if not main_script.exists():
+            raise HTTPException(status_code=404, detail="gcodegen/main.py not found")
         
-        # Progress callback
-        def progress_callback(progress: int, status: str):
-            asyncio.create_task(progress_manager.broadcast({
-                "type": "progress",
-                "progress": progress,
-                "status": status
-            }))
-        
-        # Generate toolpath
-        result = generate_toolpath(
-            points=points,
-            bounds=request.bounds,
-            config=request.config,
-            progress_callback=progress_callback
+        # Run in background (non-blocking)
+        # Note: For a real implementation, you might want to stream output via WebSocket
+        process = subprocess.Popen(
+            [python_cmd, str(main_script)],
+            cwd=str(gcodegen_dir),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
         )
         
-        # Store result
-        result_id = str(uuid.uuid4())
-        generation_results[result_id] = result
-        
+        # Don't wait for completion, return immediately
         return {
-            "result_id": result_id,
-            "toolpath": result["toolpath"],
-            "stats": result["stats"]
+            "success": True,
+            "message": f"G-code generation started (PID: {process.pid})",
+            "pid": process.pid
         }
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Path generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to run gcodegen: {str(e)}")
 
 
-@app.get("/api/results/{result_id}")
-async def get_results(result_id: str):
-    """Get generated toolpath results."""
-    if result_id not in generation_results:
-        raise HTTPException(status_code=404, detail="Result not found")
-    return generation_results[result_id]
+@app.post("/api/open-visualizer")
+async def open_visualizer():
+    """Launch gcodegen/interactivevisualizer.py as separate window."""
+    try:
+        gcodegen_dir = Path(__file__).parent / "gcodegen"
+        visualizer_script = gcodegen_dir / "interactivevisualizer.py"
+        
+        if not visualizer_script.exists():
+            raise HTTPException(status_code=404, detail="gcodegen/interactivevisualizer.py not found")
+        
+        # Launch in separate process (detached on Unix, new console on Windows)
+        python_cmd = sys.executable
+        
+        if sys.platform == "win32":
+            # Windows: Create new console window
+            subprocess.Popen(
+                [python_cmd, str(visualizer_script)],
+                cwd=str(gcodegen_dir),
+                creationflags=subprocess.CREATE_NEW_CONSOLE
+            )
+        else:
+            # Unix: Detach from parent process
+            subprocess.Popen(
+                [python_cmd, str(visualizer_script)],
+                cwd=str(gcodegen_dir),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
+        
+        return {
+            "success": True,
+            "message": "Visualizer window opened"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to open visualizer: {str(e)}")
 
 
-class ExportRequest(BaseModel):
-    result_id: str
-
-
-@app.post("/api/export/gcode")
-async def export_gcode(request: ExportRequest):
-    """Export toolpath as G-code file."""
-    if request.result_id not in generation_results:
-        raise HTTPException(status_code=404, detail="Result not found")
-    
-    result = generation_results[request.result_id]
-    toolpath = result["toolpath"]
-    
-    # Generate G-code
-    from gcodegen.main import ResultsManager, ToolpathPoint
-    
-    toolpath_points = []
-    for pt_data in toolpath:
-        toolpath_points.append(ToolpathPoint(
-            position=np.array(pt_data['position']),
-            normal=np.array(pt_data['normal']),
-            feed_rate=pt_data['feed_rate'],
-            is_rapid=pt_data['is_rapid']
-        ))
-    
-    # Save to temp file
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    gcode_path = f"toolpath_{timestamp}.gcode"
-    ResultsManager.export_gcode(toolpath_points, gcode_path)
-    
-    return FileResponse(
-        gcode_path,
-        media_type="text/plain",
-        filename=f"toolpath_{timestamp}.gcode"
-    )
-
-
-@app.post("/api/export/csv")
-async def export_csv(request: ExportRequest):
-    """Export toolpath as CSV file."""
-    if request.result_id not in generation_results:
-        raise HTTPException(status_code=404, detail="Result not found")
-    
-    result = generation_results[request.result_id]
-    toolpath = result["toolpath"]
-    
-    # Generate CSV
-    from gcodegen.main import ResultsManager, ToolpathPoint
-    
-    toolpath_points = []
-    for pt_data in toolpath:
-        toolpath_points.append(ToolpathPoint(
-            position=np.array(pt_data['position']),
-            normal=np.array(pt_data['normal']),
-            feed_rate=pt_data['feed_rate'],
-            is_rapid=pt_data['is_rapid']
-        ))
-    
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_path = Path(f"toolpath_{timestamp}.csv")
-    ResultsManager.export_csv(toolpath_points, str(csv_path))
-    
-    return FileResponse(
-        str(csv_path),
-        media_type="text/csv",
-        filename=f"toolpath_{timestamp}.csv"
-    )
 
 
 # ============================================================================
@@ -479,21 +425,6 @@ async def websocket_thermal(websocket: WebSocket):
         thermal_manager.disconnect(websocket)
 
 
-@app.websocket("/ws/progress")
-async def websocket_progress(websocket: WebSocket):
-    """WebSocket endpoint for path generation progress."""
-    await progress_manager.connect(websocket)
-    
-    try:
-        while True:
-            # Keep connection alive, progress updates come from generate endpoint
-            await asyncio.sleep(1)
-            await websocket.send_json({"type": "ping"})
-    except WebSocketDisconnect:
-        progress_manager.disconnect(websocket)
-    except Exception as e:
-        print(f"Progress WebSocket error: {e}")
-        progress_manager.disconnect(websocket)
 
 
 # ============================================================================

@@ -22,7 +22,16 @@ from backend.config import (
 from backend.sensors.mlx90640 import MLX90640Sensor
 from backend.sensors.ir_obstacle import IRObstacleSensor
 from backend.sensors.ir_reflective import IRReflectiveSensor
-from backend.sensors.realsense import RealSenseCapture
+
+# Optional RealSense support (not available on all platforms)
+try:
+    from backend.sensors.realsense import RealSenseCapture
+    REALSENSE_AVAILABLE = True
+except ImportError:
+    RealSenseCapture = None
+    REALSENSE_AVAILABLE = False
+    print("[WARN] RealSense libraries not available. 3D scanning disabled.")
+
 from backend.executor import ExecutionEngine
 
 app = FastAPI(title="Cold Plasma Robot Arm API", version="1.0.0")
@@ -169,12 +178,19 @@ async def health():
         "ir_obstacle": ir_sensor is not None,
         "ir_reflective": ir_reflective_sensor is not None,
         "executor": executor is not None,
+        "realsense": REALSENSE_AVAILABLE,
     }
 
 
 @app.post("/scan", response_model=ScanResponse)
 async def scan_arm():
     """Trigger RealSense capture and return PLY file path."""
+    if not REALSENSE_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="RealSense camera not available on this platform"
+        )
+    
     try:
         capture = RealSenseCapture()
         ply_path, num_points = await capture.single_capture()

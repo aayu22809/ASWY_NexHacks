@@ -506,9 +506,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     
     <!-- Three.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://threejs.org/examples/js/loaders/PLYLoader.js"></script>
-    <script src="https://threejs.org/examples/js/loaders/OBJLoader.js"></script>
-    <script src="https://threejs.org/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/PLYLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     
     <script>
         // Global state
@@ -765,15 +765,19 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         }
         
         async function loadModel3D(modelId) {
-            const loader = new THREE.PLYLoader();
             const url = `/api/models/${modelId}`;
             
-            loader.load(url, (geometry) => {
+            // Try PLY loader first (most common)
+            const plyLoader = new THREE.PLYLoader();
+            const objLoader = new THREE.OBJLoader();
+            
+            // Function to handle successful geometry load
+            function onGeometryLoaded(geometry) {
                 // Remove old model
                 if (modelMesh) {
                     scene.remove(modelMesh);
-                    modelMesh.geometry.dispose();
-                    modelMesh.material.dispose();
+                    if (modelMesh.geometry) modelMesh.geometry.dispose();
+                    if (modelMesh.material) modelMesh.material.dispose();
                 }
                 
                 // Create material
@@ -793,16 +797,68 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 const center = box.getCenter(new THREE.Vector3());
                 const size = box.getSize(new THREE.Vector3());
                 const maxDim = Math.max(size.x, size.y, size.z);
-                const scale = 200 / maxDim;
                 
-                modelMesh.scale.set(scale, scale, scale);
-                modelMesh.position.sub(center.multiplyScalar(scale));
-                
-                // Update camera
-                camera.position.set(maxDim * 1.5, maxDim * 1.5, maxDim * 1.5);
-                controls.target.set(0, 0, 0);
-                controls.update();
-            });
+                if (maxDim > 0) {
+                    const scale = 200 / maxDim;
+                    modelMesh.scale.set(scale, scale, scale);
+                    modelMesh.position.sub(center.multiplyScalar(scale));
+                    
+                    // Update camera
+                    camera.position.set(maxDim * 1.5, maxDim * 1.5, maxDim * 1.5);
+                    controls.target.set(0, 0, 0);
+                    controls.update();
+                }
+            }
+            
+            // Try PLY first
+            plyLoader.load(
+                url,
+                (geometry) => {
+                    addEvent('Model loaded successfully (PLY)', 'success');
+                    onGeometryLoaded(geometry);
+                },
+                (progress) => {
+                    // Loading progress
+                    if (progress.lengthComputable) {
+                        const percent = (progress.loaded / progress.total) * 100;
+                        console.log('Loading progress: ' + percent.toFixed(0) + '%');
+                    }
+                },
+                (error) => {
+                    console.error('PLY loader error:', error);
+                    addEvent('PLY load failed, trying OBJ...', 'warning');
+                    
+                    // Fallback to OBJ loader
+                    objLoader.load(
+                        url,
+                        (object) => {
+                            // OBJLoader returns a Group, extract geometry from first child
+                            if (object.children && object.children.length > 0) {
+                                const firstChild = object.children[0];
+                                if (firstChild.geometry) {
+                                    addEvent('Model loaded successfully (OBJ)', 'success');
+                                    onGeometryLoaded(firstChild.geometry);
+                                } else {
+                                    addEvent('OBJ loaded but no geometry found', 'error');
+                                }
+                            } else {
+                                addEvent('OBJ file appears empty', 'error');
+                            }
+                        },
+                        (progress) => {
+                            // Loading progress
+                            if (progress.lengthComputable) {
+                                const percent = (progress.loaded / progress.total) * 100;
+                                console.log('OBJ loading progress: ' + percent.toFixed(0) + '%');
+                            }
+                        },
+                        (error) => {
+                            console.error('OBJ loader error:', error);
+                            addEvent(`Failed to load model: ${error.message || 'Unknown error'}`, 'error');
+                        }
+                    );
+                }
+            );
         }
         
         async function loadDemoHand() {

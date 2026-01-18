@@ -17,6 +17,76 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 CLEANUP_TTL = timedelta(hours=24)
 
 
+def parse_obj_file_manual(obj_path: str):
+    """
+    Manually parse OBJ file to extract vertices and faces.
+    This is a fallback when Open3D fails to parse certain OBJ files.
+    
+    Args:
+        obj_path: Path to OBJ file
+    
+    Returns:
+        Tuple of (vertices_array, faces_array) as numpy arrays
+    """
+    vertices = []
+    faces = []
+    try:
+        with open(obj_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                
+                # Parse vertex line: "v x y z"
+                if line.startswith('v ') and not line.startswith('vn ') and not line.startswith('vt '):
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        try:
+                            x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
+                            vertices.append([x, y, z])
+                        except ValueError:
+                            continue
+                
+                # Parse face line: "f v1/vt1/vn1 v2/vt2/vn2 v3/vt3/vn3 [v4/vt4/vn4]"
+                elif line.startswith('f '):
+                    parts = line.split()[1:]  # Skip 'f'
+                    face_vertices = []
+                    for part in parts:
+                        # Handle format: "v", "v/vt", "v/vt/vn", or "v//vn"
+                        vertex_idx = part.split('/')[0]
+                        try:
+                            # OBJ indices are 1-based, convert to 0-based
+                            idx = int(vertex_idx) - 1
+                            if 0 <= idx < len(vertices):
+                                face_vertices.append(idx)
+                        except ValueError:
+                            continue
+                    
+                    # Convert quads to triangles
+                    if len(face_vertices) >= 3:
+                        if len(face_vertices) == 3:
+                            # Already a triangle
+                            faces.append(face_vertices)
+                        elif len(face_vertices) == 4:
+                            # Quad: split into two triangles
+                            # Triangle 1: v0, v1, v2
+                            faces.append([face_vertices[0], face_vertices[1], face_vertices[2]])
+                            # Triangle 2: v0, v2, v3
+                            faces.append([face_vertices[0], face_vertices[2], face_vertices[3]])
+                        else:
+                            # Polygon with more than 4 vertices: fan triangulation
+                            for i in range(1, len(face_vertices) - 1):
+                                faces.append([face_vertices[0], face_vertices[i], face_vertices[i+1]])
+    except Exception as e:
+        print(f"  [WARN] Error parsing OBJ file manually: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    vertices_array = np.array(vertices) if vertices else None
+    faces_array = np.array(faces, dtype=np.int32) if faces else None
+    return vertices_array, faces_array
+
+
 def save_uploaded_model(file_content: bytes, filename: str) -> Tuple[str, dict]:
     """
     Save uploaded model file and return model_id and metadata.
@@ -90,6 +160,7 @@ def save_uploaded_model(file_content: bytes, filename: str) -> Tuple[str, dict]:
 def convert_obj_to_ply(obj_path: str, model_id: str) -> Path:
     """
     Convert OBJ file to PLY format.
+    Uses manual parsing as fallback when Open3D fails.
     
     Args:
         obj_path: Path to OBJ file
@@ -101,24 +172,85 @@ def convert_obj_to_ply(obj_path: str, model_id: str) -> Path:
     ply_path = UPLOAD_DIR / f"{model_id}.ply"
     
     try:
-        # Try reading as mesh first
-        mesh = o3d.io.read_triangle_mesh(obj_path)
+        # Try reading as mesh first with Open3D
+        mesh = o3d.io.read_triangle_mesh(obj_path, enable_post_processing=True)
         
-        if len(mesh.vertices) > 0:
+        if len(mesh.vertices) > 0 and len(mesh.triangles) > 0:
             # Save as PLY mesh
             o3d.io.write_triangle_mesh(str(ply_path), mesh)
-        else:
-            # Try as point cloud
-            pcd = o3d.io.read_point_cloud(obj_path)
-            if len(pcd.points) > 0:
+            return ply_path
+        elif len(mesh.vertices) > 0:
+            # Has vertices but no triangles - try manual parsing
+            print(f"  [INFO] Open3D found {len(mesh.vertices)} vertices but no triangles, trying manual parsing...")
+            vertices, faces = parse_obj_file_manual(obj_path)
+            
+            if vertices is not None and len(vertices) > 0:
+                # Create mesh from manually parsed data
+                mesh = o3d.geometry.TriangleMesh()
+                mesh.vertices = o3d.utility.Vector3dVector(vertices)
+                if faces is not None and len(faces) > 0:
+                    mesh.triangles = o3d.utility.Vector3iVector(faces.astype(np.int32))
+                    mesh.compute_vertex_normals()
+                    mesh.compute_triangle_normals()
+                
+                # Save as PLY
+                o3d.io.write_triangle_mesh(str(ply_path), mesh)
+                return ply_path
+            else:
+                # Fallback: use vertices as point cloud
+                pcd = o3d.geometry.PointCloud()
+                pcd.points = o3d.utility.Vector3dVector(vertices)
                 o3d.io.write_point_cloud(str(ply_path), pcd)
+                return ply_path
+        else:
+            # Try manual parsing as fallback
+            print(f"  [INFO] Open3D failed to read OBJ, trying manual parsing...")
+            vertices, faces = parse_obj_file_manual(obj_path)
+            
+            if vertices is not None and len(vertices) > 0:
+                # Create mesh from manually parsed data
+                mesh = o3d.geometry.TriangleMesh()
+                mesh.vertices = o3d.utility.Vector3dVector(vertices)
+                if faces is not None and len(faces) > 0:
+                    mesh.triangles = o3d.utility.Vector3iVector(faces.astype(np.int32))
+                    mesh.compute_vertex_normals()
+                    mesh.compute_triangle_normals()
+                    # Save as PLY mesh
+                    o3d.io.write_triangle_mesh(str(ply_path), mesh)
+                else:
+                    # No faces, save as point cloud
+                    pcd = o3d.geometry.PointCloud()
+                    pcd.points = o3d.utility.Vector3dVector(vertices)
+                    o3d.io.write_point_cloud(str(ply_path), pcd)
+                return ply_path
             else:
                 raise ValueError("OBJ file contains no vertices or points")
         
-        return ply_path
-        
     except Exception as e:
-        raise ValueError(f"Failed to convert OBJ to PLY: {str(e)}")
+        # Final fallback: try manual parsing
+        print(f"  [WARN] Open3D conversion failed: {e}, trying manual parsing...")
+        try:
+            vertices, faces = parse_obj_file_manual(obj_path)
+            
+            if vertices is not None and len(vertices) > 0:
+                # Create mesh from manually parsed data
+                mesh = o3d.geometry.TriangleMesh()
+                mesh.vertices = o3d.utility.Vector3dVector(vertices)
+                if faces is not None and len(faces) > 0:
+                    mesh.triangles = o3d.utility.Vector3iVector(faces.astype(np.int32))
+                    mesh.compute_vertex_normals()
+                    mesh.compute_triangle_normals()
+                    o3d.io.write_triangle_mesh(str(ply_path), mesh)
+                else:
+                    # No faces, save as point cloud
+                    pcd = o3d.geometry.PointCloud()
+                    pcd.points = o3d.utility.Vector3dVector(vertices)
+                    o3d.io.write_point_cloud(str(ply_path), pcd)
+                return ply_path
+            else:
+                raise ValueError(f"Failed to parse OBJ file: {str(e)}")
+        except Exception as e2:
+            raise ValueError(f"Failed to convert OBJ to PLY: {str(e)} (manual parse also failed: {str(e2)})")
 
 
 def get_model(model_id: str) -> Optional[Path]:

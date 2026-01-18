@@ -107,6 +107,69 @@ mlx_sensor: Optional[MLX90640Sensor] = None
 sensor_lock = Lock()
 generation_results: Dict[str, dict] = {}  # Store generated toolpaths by ID
 
+# Thermal simulation state
+_thermal_sim_time = 0.0
+
+
+def generate_fake_thermal_data() -> dict:
+    """
+    Generate simulated thermal camera data for demo purposes.
+    Creates a hand-shaped thermal pattern with a hotspot.
+    
+    Returns:
+        Dict with thermal data matching MLX90640 format (768 values, 24x32)
+    """
+    global _thermal_sim_time
+    _thermal_sim_time += 0.25  # Increment time for animation
+    
+    # MLX90640 is 24x32 (height x width)
+    height, width = 24, 32
+    thermal = np.zeros((height, width))
+    
+    # Base temperature (room temp)
+    base_temp = 22.0
+    
+    # Create hand-shaped pattern
+    center_x, center_y = width // 2, height // 2
+    
+    for y in range(height):
+        for x in range(width):
+            # Distance from center
+            dx = (x - center_x) / width
+            dy = (y - center_y) / height
+            dist = np.sqrt(dx**2 + dy**2)
+            
+            # Hand shape: oval with fingers
+            hand_shape = np.exp(-(dx**2 / 0.3**2 + dy**2 / 0.5**2))
+            
+            # Add hotspot (simulating wound area)
+            hotspot_x = center_x + 3
+            hotspot_y = center_y - 2
+            hotspot_dist = np.sqrt((x - hotspot_x)**2 + (y - hotspot_y)**2)
+            hotspot = np.exp(-hotspot_dist**2 / 4.0) * 8.0
+            
+            # Add some variation
+            noise = np.random.normal(0, 0.5)
+            
+            # Temperature calculation
+            temp = base_temp + hand_shape * 5.0 + hotspot + noise
+            
+            # Add time-varying component (simulates breathing/movement)
+            temp += np.sin(_thermal_sim_time * 0.5) * 0.5
+            
+            thermal[y, x] = max(20.0, min(40.0, temp))  # Clamp to reasonable range
+    
+    # Flatten to 768-element array (row-major order)
+    thermal_flat = thermal.flatten().tolist()
+    
+    return {
+        "thermal": thermal_flat,
+        "max_temp": float(np.max(thermal)),
+        "min_temp": float(np.min(thermal)),
+        "mean_temp": float(np.mean(thermal)),
+        "timestamp": datetime.now().isoformat(),
+    }
+
 # WebSocket connection managers
 class ConnectionManager:
     def __init__(self):
@@ -402,10 +465,9 @@ async def websocket_thermal(websocket: WebSocket):
                         "timestamp": datetime.now().isoformat(),
                     })
             else:
-                await websocket.send_json({
-                    "error": "Sensor not available",
-                    "timestamp": datetime.now().isoformat(),
-                })
+                # Use simulated thermal data for demo
+                fake_data = generate_fake_thermal_data()
+                await websocket.send_json(fake_data)
             
             # Stream at ~4Hz
             await asyncio.sleep(0.25)

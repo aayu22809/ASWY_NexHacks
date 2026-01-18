@@ -15,54 +15,6 @@ import os
 import time
 import csv
 
-# Debug helper: set TP_DEBUG_PATH=1 to print the exact script path + hash being executed.
-if os.environ.get("TP_DEBUG_PATH") == "1":
-    try:
-        import pathlib, hashlib
-        _p = pathlib.Path(__file__).resolve()
-        _h = hashlib.md5(_p.read_bytes()).hexdigest()
-        print(f"[thermal_predictor] RUNNING: {_p} md5={_h}")
-    except Exception as _e:
-        print(f"[thermal_predictor] DEBUG_PATH failed: {_e}")
-
-
-class SimulatedTempSource:
-    """Fallback temperature source for laptops (no I2C/sensor).
-
-    Produces a plausible temperature curve that responds to agent actions.
-    """
-
-    def __init__(self, start_c: float = 36.5):
-        self.obj_temp = float(start_c)
-        self.amb_temp = 24.0
-        self._last_t = time.time()
-
-    def step(self, planned_speed: float, plasma_power: float, standoff_mm: float):
-        # very simple dynamics: power heats, standoff cools, time constant smoothing
-        now = time.time()
-        dt = max(now - self._last_t, 1e-3)
-        self._last_t = now
-
-        # heating rate scales with power and inversely with standoff
-        heat = (plasma_power / 100.0) * (10.0 / max(standoff_mm, 1.0))
-        # movement slightly reduces dwell heating
-        heat *= 1.0 / (1.0 + (planned_speed / 60.0))
-
-        # baseline cooling toward ambient
-        cool = 0.15 * (self.obj_temp - self.amb_temp)
-
-        dTdt = 0.55 * heat - cool
-        self.obj_temp += dTdt * dt
-
-        # clamp to reasonable demo range
-        self.obj_temp = float(max(20.0, min(60.0, self.obj_temp)))
-
-    def read_object_c(self) -> float:
-        return float(self.obj_temp)
-
-    def read_ambient_c(self) -> float:
-        return float(self.amb_temp)
-
 # Optional MLX90614 support (I2C IR temperature sensor)
 # Works on Raspberry Pi / Jetson when I2C is enabled.
 # Preferred install:
@@ -72,29 +24,19 @@ class SimulatedTempSource:
 from typing import Optional
 
 
-
-# Optional: fetch a public dataset (UCI) to sanity-check your training pipeline.
-# IMPORTANT: do NOT fetch at import-time (breaks offline runs and can fail due to SSL).
-try:
-    from ucimlrepo import fetch_ucirepo
-    _HAVE_UCI = True
-except Exception:
-    fetch_ucirepo = None
-    _HAVE_UCI = False
-
-
-def fetch_uci_infrared_thermography(id: int = 925):
-    """Fetch the UCI Infrared Thermography Temperature dataset (returns X, y, meta).
-
-    Note: This requires internet access and a working SSL certificate chain.
-    """
-    if not _HAVE_UCI:
-        raise RuntimeError("ucimlrepo not installed. Run: pip install ucimlrepo")
-    ds = fetch_ucirepo(id=id)
-    X = ds.data.features
-    y = ds.data.targets
-    return X, y, ds.metadata, ds.variables
-
+from ucimlrepo import fetch_ucirepo 
+  
+# fetch dataset 
+infrared_thermography_temperature = fetch_ucirepo(id=925) 
+  
+# data (as pandas dataframes) 
+X = infrared_thermography_temperature.data.features 
+y = infrared_thermography_temperature.data.targets 
+  
+# metadata 
+print(infrared_thermography_temperature.metadata) 
+  
+# variable information 
 
 try:
     import board
@@ -349,43 +291,19 @@ def main():
     p.add_argument("--predict", action="store_true", help="demo predict")
     p.add_argument("--read-mlx", action="store_true", help="Read current_temp from MLX90614 (object temp)")
     p.add_argument("--mlx-addr", type=lambda x: int(x, 0), default=0x5A, help="MLX90614 I2C address (default 0x5A)")
-    p.add_argument("--simulate", action="store_true", help="Simulate temperatures (useful on Mac without MLX90614)")
-    p.add_argument("--fetch-uci", action="store_true", help="Fetch UCI Infrared Thermography dataset (sanity check)")
     p.add_argument("--loop", action="store_true", help="Run continuous agent loop (reads sensor and outputs actions)")
     p.add_argument("--hz", type=float, default=5.0, help="Loop frequency for --loop")
     p.add_argument("--log", default=None, help="Optional CSV log path for --loop")
     args = p.parse_args()
 
-    if args.fetch_uci:
-        try:
-            X, y, meta, vars_ = fetch_uci_infrared_thermography()
-            print(meta)
-            print(vars_)
-            print("Fetched UCI dataset:", getattr(X, "shape", None), getattr(y, "shape", None))
-        except Exception as e:
-            print("Failed to fetch UCI dataset.")
-            print("On macOS with python.org Python, you may need to run: Install Certificates.command")
-            print("Error:", e)
-        return
-
     agent = ThermalSafetyAgent()
     mlx = None
-    sim = None
-
-    if args.simulate:
-        sim = SimulatedTempSource(start_c=36.5)
-        print("Using simulated temperature source (--simulate)")
-
     if args.read_mlx:
         try:
             mlx = MLX90614Sensor(address=args.mlx_addr)
             print(f"MLX90614 ready at address {hex(args.mlx_addr)}")
         except Exception as e:
-            if sim is not None:
-                print(f"Warning: failed to init MLX90614 ({e}). Falling back to simulation.")
-                mlx = None
-            else:
-                raise SystemExit(f"Failed to init MLX90614: {e}")
+            raise SystemExit(f"Failed to init MLX90614: {e}")
 
     if args.train:
         print("Training from", args.train)
@@ -395,12 +313,7 @@ def main():
         # If MLX90614 is connected, use its object temperature as current_temp.
         current_temp = 36.5
         ambient_temp = None
-        if sim is not None:
-            # take one dynamics step for a slightly non-trivial demo
-            sim.step(planned_speed=60.0, plasma_power=80.0, standoff_mm=10.0)
-            current_temp = sim.read_object_c()
-            ambient_temp = sim.read_ambient_c()
-        elif mlx is not None:
+        if mlx is not None:
             current_temp = mlx.read_object_c()
             ambient_temp = mlx.read_ambient_c()
 
@@ -415,12 +328,13 @@ def main():
         out = agent.recommend_action(sample)
         if ambient_temp is not None:
             out["ambient_temp"] = float(ambient_temp)
+            
 
         print("Sample predict ->", out)
 
     if args.loop:
-        if mlx is None and sim is None:
-            raise SystemExit("--loop requires --read-mlx (hardware) or --simulate (laptop demo)")
+        if mlx is None:
+            raise SystemExit("--loop requires --read-mlx so we have a live temperature source")
 
         period = 1.0 / max(float(args.hz), 0.1)
         log_writer = None
@@ -446,13 +360,8 @@ def main():
         try:
             while True:
                 t = time.time()
-                if sim is not None:
-                    sim.step(planned_speed=planned_speed, plasma_power=plasma_power, standoff_mm=standoff_mm)
-                    obj_temp = sim.read_object_c()
-                    amb_temp = sim.read_ambient_c()
-                else:
-                    obj_temp = mlx.read_object_c()
-                    amb_temp = mlx.read_ambient_c()
+                obj_temp = mlx.read_object_c()
+                amb_temp = mlx.read_ambient_c()
 
                 state = {
                     "current_temp": float(obj_temp),

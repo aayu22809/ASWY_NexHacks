@@ -32,9 +32,9 @@ JETSON_I2C_BUSES = [1, 8, 0, 7]  # I2C buses to try (Bus 1 is most common - pins
 THERMAL_MAX_SAFE_TEMP = 40.0  # Celsius
 THERMAL_WARNING_TEMP = 38.0  # Celsius
 
-# RealSense configuration
-REALSENSE_DEPTH_MIN = 0.20  # meters
-REALSENSE_DEPTH_MAX = 0.90  # meters
+# RealSense configuration (tuned for D405: 7cm–50cm short-range stereo IR camera)
+REALSENSE_DEPTH_MIN = 0.07  # meters (D405 minimum: 7 cm)
+REALSENSE_DEPTH_MAX = 0.50  # meters (D405 maximum: 50 cm)
 REALSENSE_CAPTURE_DIR = "captures"  # Directory for saved PLY files
 
 # Execution configuration

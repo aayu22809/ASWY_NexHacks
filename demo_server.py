@@ -9,19 +9,6 @@ Single FastAPI server combining:
 - Embedded HTML interface
 """
 
-# region agent log
-import json
-from datetime import datetime
-LOG_PATH = '/Users/aayu/Workspace/developer/ASWY_NexHacks/.cursor/debug.log'
-def log_debug(location, message, data=None, hypothesis_id=None):
-    try:
-        with open(LOG_PATH, 'a') as f:
-            entry = {'location': location, 'message': message, 'data': data or {}, 'timestamp': datetime.now().isoformat(), 'sessionId': 'debug-session', 'hypothesisId': hypothesis_id}
-            f.write(json.dumps(entry) + '\n')
-    except: pass
-log_debug('demo_server.py:1', 'Script started', {}, 'H1,H2,H4')
-# endregion
-
 import asyncio
 import json
 import os
@@ -32,19 +19,11 @@ from pathlib import Path
 from typing import Optional, Dict
 from threading import Lock
 
-# region agent log
-log_debug('demo_server.py:20', 'Standard imports successful', {}, 'H1,H2')
-# endregion
-
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend for server
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-
-# region agent log
-log_debug('demo_server.py:23', 'About to import FastAPI', {}, 'H2')
-# endregion
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -52,48 +31,24 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 from io import BytesIO
 
-# region agent log
-log_debug('demo_server.py:30', 'FastAPI imported successfully', {}, 'H2')
-log_debug('demo_server.py:31', 'About to import backend modules', {}, 'H1,H4')
-# endregion
-
 # Import backend modules
 from backend.model_storage import save_uploaded_model, get_model, cleanup_old_files
 from backend.path_generator import generate_toolpath
 import open3d as o3d
 
-# region agent log
-log_debug('demo_server.py:35', 'Backend modules imported successfully', {}, 'H1,H4')
-# endregion
-
 # Import sensor
 try:
     from backend.sensors.mlx90640 import MLX90640Sensor
     MLX_AVAILABLE = True
-    # region agent log
-    log_debug('demo_server.py:40', 'MLX90640 sensor available', {}, 'H1')
-    # endregion
-except ImportError as e:
+except ImportError:
     MLX90640Sensor = None
     MLX_AVAILABLE = False
-    # region agent log
-    log_debug('demo_server.py:42', 'MLX90640 sensor not available', {'error': str(e)}, 'H1')
-    # endregion
     print("[WARN] MLX90640 sensor not available")
 
 # Import HTML template
 try:
-    # region agent log
-    log_debug('demo_server.py:45', 'About to import HTML template', {}, 'H1,H5')
-    # endregion
     from demo_server_html import HTML_TEMPLATE
-    # region agent log
-    log_debug('demo_server.py:47', 'HTML template imported successfully', {'template_length': len(HTML_TEMPLATE)}, 'H1,H5')
-    # endregion
-except ImportError as e:
-    # region agent log
-    log_debug('demo_server.py:49', 'HTML template import failed', {'error': str(e)}, 'H1,H5')
-    # endregion
+except ImportError:
     HTML_TEMPLATE = "<html><body><h1>Error: HTML template not found</h1></body></html>"
 
 app = FastAPI(title="Cold Plasma Treatment System", version="2.0.0")
@@ -621,27 +576,16 @@ async def websocket_progress(websocket: WebSocket):
 
 if __name__ == "__main__":
     import uvicorn
-    
-    # region agent log
-    log_debug('demo_server.py:__main__', 'Main block reached', {}, 'H1,H2')
-    # endregion
-    
+
     print("=" * 70)
     print("Cold Plasma Treatment System - Unified Demo Server")
     print("=" * 70)
     print(f"\n[INFO] Starting server on http://0.0.0.0:8000")
     print(f"[INFO] Open http://localhost:8000 in your browser")
     print("\n" + "=" * 70)
-    
-    # region agent log
-    log_debug('demo_server.py:__main__', 'About to start uvicorn', {'host': '0.0.0.0', 'port': 8000}, 'H3')
-    # endregion
-    
+
     try:
         uvicorn.run(app, host="0.0.0.0", port=8000)
     except Exception as e:
-        # region agent log
-        log_debug('demo_server.py:__main__', 'Uvicorn start failed', {'error': str(e), 'error_type': type(e).__name__}, 'H3')
-        # endregion
         print(f"[ERROR] Failed to start server: {e}")
         raise

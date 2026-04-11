@@ -121,10 +121,19 @@ class InteractiveVisualizer:
         
         self.info_text = tk.Text(control_frame, height=8, width=30, font=("Courier", 9))
         self.info_text.grid(row=22, column=0, sticky=(tk.W, tk.E), pady=5)
-        
+
+        # Live capture section
+        ttk.Separator(control_frame, orient='horizontal').grid(row=23, column=0, sticky=tk.EW, pady=8)
+        ttk.Label(control_frame, text="Live Capture:", font=("Arial", 10, "bold")).grid(row=24, column=0, sticky=tk.W)
+        ttk.Button(control_frame, text="Capture from D405",
+                  command=self.capture_from_d405).grid(row=25, column=0, sticky=tk.EW, pady=5)
+        self.capture_status_var = tk.StringVar(value="")
+        ttk.Label(control_frame, textvariable=self.capture_status_var,
+                 foreground="gray").grid(row=26, column=0, sticky=tk.W)
+
         # Quit button
-        ttk.Button(control_frame, text="Quit", 
-                  command=self.root.quit).grid(row=23, column=0, sticky=tk.EW, pady=(20, 0))
+        ttk.Button(control_frame, text="Quit",
+                  command=self.root.quit).grid(row=27, column=0, sticky=tk.EW, pady=(20, 0))
         
         # ===== PLOT AREA =====
         # Create matplotlib figure
@@ -347,6 +356,94 @@ class InteractiveVisualizer:
         if filename:
             self.fig.savefig(filename, bbox_inches='tight')
             messagebox.showinfo("Success", f"Plot saved to:\n{filename}")
+
+    def capture_from_d405(self):
+        """Capture a point cloud from the connected RealSense D405 and display it."""
+        try:
+            import pyrealsense2 as rs
+        except ImportError:
+            messagebox.showerror(
+                "Missing Library",
+                "pyrealsense2 not installed.\nRun: pip install pyrealsense2"
+            )
+            return
+
+        self.capture_status_var.set("Connecting to D405...")
+        self.root.update()
+
+        pipeline = None
+        try:
+            pipeline = rs.pipeline()
+            config = rs.config()
+            config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+            config.enable_stream(rs.stream.infrared, 1, 640, 480, rs.format.y8, 30)
+            pipeline.start(config)
+
+            align = rs.align(rs.stream.infrared)
+            pc = rs.pointcloud()
+            spatial = rs.spatial_filter()
+            temporal = rs.temporal_filter()
+            hole = rs.hole_filling_filter(1)
+
+            self.capture_status_var.set("Warming up (30 frames)...")
+            self.root.update()
+            for _ in range(30):
+                pipeline.wait_for_frames()
+
+            self.capture_status_var.set("Capturing...")
+            self.root.update()
+            frames = pipeline.wait_for_frames()
+            aligned = align.process(frames)
+            depth_frame = aligned.get_depth_frame()
+            ir_frame = aligned.get_infrared_frame(1)
+
+            if not depth_frame or not ir_frame:
+                raise RuntimeError("Failed to capture valid frames from D405")
+
+            depth_frame = spatial.process(depth_frame)
+            depth_frame = temporal.process(depth_frame)
+            depth_frame = hole.process(depth_frame)
+
+            pc.map_to(ir_frame)
+            points = pc.calculate(depth_frame)
+
+            vertices = np.asanyarray(points.get_vertices()).view(np.float32).reshape(-1, 3)
+            tex_coords = np.asanyarray(points.get_texture_coordinates()).view(np.float32).reshape(-1, 2)
+
+            # Filter: valid coords, D405 depth range (7-50 cm), center 60% ROI
+            valid = (
+                np.isfinite(vertices).all(axis=1) &
+                (vertices[:, 2] >= 0.07) & (vertices[:, 2] <= 0.50) &
+                (tex_coords[:, 0] >= 0.2) & (tex_coords[:, 0] <= 0.8) &
+                (tex_coords[:, 1] >= 0.2) & (tex_coords[:, 1] <= 0.8)
+            )
+            pts = vertices[valid]
+
+            if len(pts) == 0:
+                raise RuntimeError(
+                    "No valid points captured.\n"
+                    "Ensure the target is 7-50 cm from the D405."
+                )
+
+            # Convert from meters to mm to match the toolpath coordinate system
+            pts_mm = pts * 1000.0
+
+            self.surface = SurfaceModel(pts_mm, "D405 Capture")
+            self.toolpath = None
+            self.results_data = None
+            self.update_info()
+            self.update_plot()
+            self.capture_status_var.set(f"Captured {len(pts_mm):,} points")
+
+        except Exception as e:
+            messagebox.showerror("Capture Failed", str(e))
+            self.capture_status_var.set("Capture failed")
+        finally:
+            if pipeline is not None:
+                try:
+                    pipeline.stop()
+                except Exception:
+                    pass
 
 
 def main():

@@ -34,13 +34,10 @@ except ImportError:
 
 from backend.executor import ExecutionEngine
 from backend.model_storage import save_uploaded_model, get_model, cleanup_old_files
-from backend.path_generator import generate_toolpath, filter_points_by_bounds
+from backend.path_generator import generate_toolpath
 import open3d as o3d
 
 app = FastAPI(title="Cold Plasma Robot Arm API", version="1.0.0")
-
-# Generation progress WebSocket manager
-generation_manager = ConnectionManager()
 
 # CORS middleware
 app.add_middleware(
@@ -77,6 +74,7 @@ class ConnectionManager:
                 pass  # Connection may be closed
 
 manager = ConnectionManager()
+generation_manager = ConnectionManager()
 
 
 # Request/Response models
@@ -214,7 +212,7 @@ async def scan_arm():
 async def generate_path(mesh_path: str, config: PathConfig):
     """Generate toolpath from mesh file."""
     try:
-        from main import SurfaceModel, RasterGenerator, ToolpathConfig, ResultsManager
+        from gcodegen.main import SurfaceModel, RasterGenerator, ToolpathConfig, ResultsManager
         
         # Load mesh or point cloud
         import open3d as o3d

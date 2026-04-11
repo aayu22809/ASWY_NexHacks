@@ -7,7 +7,13 @@ from pathlib import Path
 
 import numpy as np
 import open3d as o3d
-import pyrealsense2 as rs
+try:
+    import pyrealsense2 as rs
+except ImportError as e:
+    raise ImportError(
+        "pyrealsense2 is required for RealSenseCapture. "
+        "Install with: pip install pyrealsense2"
+    ) from e
 
 from backend.config import (
     REALSENSE_CAPTURE_DIR,
@@ -24,8 +30,8 @@ class RealSenseCapture:
         self.pipeline = rs.pipeline()
         self.config = rs.config()
         
-        # Enable streams
-        self.config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+        # Enable streams — D405 has no color camera; use infrared stream 1 for texture
+        self.config.enable_stream(rs.stream.infrared, 1, 640, 480, rs.format.y8, 30)
         self.config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
         
         # Start pipeline
@@ -35,8 +41,8 @@ class RealSenseCapture:
         except Exception as e:
             raise RuntimeError(f"Failed to start RealSense pipeline: {e}")
         
-        # Create align object
-        self.align = rs.align(rs.stream.color)
+        # Create align object — align depth to infrared (D405 has no color stream)
+        self.align = rs.align(rs.stream.infrared)
         
         # Create point cloud object
         self.pc = rs.pointcloud()
@@ -66,41 +72,40 @@ class RealSenseCapture:
         # Capture frame
         frames = self.pipeline.wait_for_frames()
         
-        # Align depth to color
+        # Align depth to infrared (D405 has no color stream)
         aligned_frames = self.align.process(frames)
         depth_frame = aligned_frames.get_depth_frame()
-        color_frame = aligned_frames.get_color_frame()
-        
-        if not depth_frame or not color_frame:
+        ir_frame = aligned_frames.get_infrared_frame(1)
+
+        if not depth_frame or not ir_frame:
             raise RuntimeError("Failed to capture valid frames")
-        
+
         # Apply filters
         depth_frame = self.spatial_filter.process(depth_frame)
         depth_frame = self.temporal_filter.process(depth_frame)
         depth_frame = self.hole_filter.process(depth_frame)
-        
-        # Generate point cloud
-        self.pc.map_to(color_frame)
+
+        # Generate point cloud — map texture from IR frame
+        self.pc.map_to(ir_frame)
         points = self.pc.calculate(depth_frame)
-        
+
         # Extract vertices and texture coordinates
         vertices = np.asanyarray(points.get_vertices()).view(np.float32).reshape(-1, 3)
         tex_coords = np.asanyarray(points.get_texture_coordinates()).view(np.float32).reshape(-1, 2)
-        
-        # Get color data
-        color_image = np.asanyarray(color_frame.get_data())
-        width = color_frame.get_width()
-        height = color_frame.get_height()
-        
-        # Map texture coordinates to colors
+
+        # Get IR image data (Y8 grayscale, shape H×W)
+        ir_image = np.asanyarray(ir_frame.get_data())
+        height, width = ir_image.shape
+
+        # Map texture coordinates to IR pixel locations
         u = (tex_coords[:, 0] * (width - 1)).astype(np.int32)
         v = (tex_coords[:, 1] * (height - 1)).astype(np.int32)
         u = np.clip(u, 0, width - 1)
         v = np.clip(v, 0, height - 1)
-        
-        # Sample colors (BGR -> RGB) and normalize
-        colors = color_image[v, u, :].astype(np.float32) / 255.0
-        colors = colors[:, ::-1]  # BGR to RGB
+
+        # Sample grayscale IR and tile to 3-channel float RGB
+        gray = ir_image[v, u].astype(np.float32) / 255.0
+        colors = np.stack([gray, gray, gray], axis=1)
         
         # Filter points
         valid_mask = np.isfinite(vertices).all(axis=1)

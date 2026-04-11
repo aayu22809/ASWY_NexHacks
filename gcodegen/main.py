@@ -573,11 +573,23 @@ class SimpleSurfaces:
 class SurfaceModel:
     """Smooth surface representation"""
     
+    # RBFInterpolator builds an N x N kernel matrix (float64).  At 150k
+    # points that's ~180 GB — way too large.  Fall back to the lightweight
+    # cKDTree path when the point cloud exceeds this threshold.
+    _RBF_POINT_LIMIT = 10_000
+
     def __init__(self, points, surface_name="surface", use_mesh_direct=False):
         self.points = points
         self.surface_name = surface_name
-        # For hand models, use mesh-based lookup to preserve 3D shape
-        self.use_mesh_direct = use_mesh_direct or ("hand" in surface_name.lower() or "Hand" in surface_name)
+        # For hand models, use mesh-based lookup to preserve 3D shape.
+        # Also force mesh-direct for large point clouds (e.g. D405 captures)
+        # to avoid the O(N^2) memory cost of RBFInterpolator.
+        self.use_mesh_direct = (
+            use_mesh_direct
+            or "hand" in surface_name.lower()
+            or "Hand" in surface_name
+            or len(points) > self._RBF_POINT_LIMIT
+        )
         
         if self.use_mesh_direct:
             # For 3D objects like hands, use nearest neighbor search on actual points
